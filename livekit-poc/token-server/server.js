@@ -176,7 +176,7 @@ app.get('/api/terminals', (_req, res) => res.json(db.prepare('SELECT id,name,mod
 
 // ---------- 利用者 ----------
 app.post('/api/user/join', (req, res) => {
-  const { name, passcode, language, mode, connectMode } = req.body || {};
+  const { name, passcode, language, mode, connectMode, gpsLocation } = req.body || {};
   if (!name || !passcode || !language || !mode) return res.status(400).json({ error: 'name, passcode, language, mode は必須です' });
   if (String(passcode) !== String(DEMO_PASSCODE)) return res.status(401).json({ error: '端末コードが違います' });
   if (!enabledLangs().some((l) => l.code === language)) return res.status(400).json({ error: '未対応の言語です' });
@@ -184,11 +184,15 @@ app.post('/api/user/join', (req, res) => {
   const cm = mode === 'B' ? (connectMode === 'staged' ? 'staged' : 'both') : null;
   const now = Date.now();
   const geo = geoOf(req);
+  // GPS由来の地名（クライアントで逆ジオコーディング済み）があれば優先。無ければIP推定。
+  const gps = (typeof gpsLocation === 'string' && gpsLocation.trim()) ? gpsLocation.trim().slice(0, 120) : '';
+  const location = gps || geo.location;
+  const locSource = gps ? 'gps' : 'ip';
   const info = db.prepare('INSERT INTO calls(session_id,name,language,mode,connect_mode,enqueued_at,status,location,country) VALUES(?,?,?,?,?,?,?,?,?)')
-    .run(id, name, language, mode, cm, now, 'waiting', geo.location, geo.country);
-  sessions.set(id, { id, name, language, mode, connectMode: cm, status: 'waiting', room: null, interpreterId: null, guideId: null, needGuide: false, lastSeen: now, enqueuedAt: now, assignedAt: null, callId: info.lastInsertRowid, location: geo.location });
+    .run(id, name, language, mode, cm, now, 'waiting', location, geo.country);
+  sessions.set(id, { id, name, language, mode, connectMode: cm, status: 'waiting', room: null, interpreterId: null, guideId: null, needGuide: false, lastSeen: now, enqueuedAt: now, assignedAt: null, callId: info.lastInsertRowid, location });
   queue.push(id);
-  logEvent('user_join', name, { session: id, language, mode, location: geo.location, ip: geo.ip, region: geo.region, city: geo.city, v6: geo.v6 });
+  logEvent('user_join', name, { session: id, language, mode, location, source: locSource, ip: geo.ip, region: geo.region, city: geo.city, v6: geo.v6 });
   tryAssign();
   res.json({ sessionId: id });
 });

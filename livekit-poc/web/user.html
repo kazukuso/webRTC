@@ -52,6 +52,9 @@
         </div>
       </div>
     </div>
+    <div class="b-only hidden" id="gpsWrap" style="margin-top:8px;">
+      <label style="font-size:13px;color:#555;"><input type="checkbox" id="useGps"> 現在地を送信する（任意・市区町村の記録に使用。ブラウザの許可が必要）</label>
+    </div>
     <hr style="border:none;border-top:1px solid #d5deea;margin:14px 0;">
     <div class="row">
       <div><label>お名前</label><input id="name" placeholder="例: 来訪者A" /></div>
@@ -94,9 +97,26 @@ fetch('/api/languages').then(r=>r.json()).then(list=>{
   $("language").innerHTML = list.map(l=>`<option value="${l.code}">${l.label}</option>`).join('');
 });
 // モードでB専用項目の表示切替
+const isB=()=>document.querySelector('input[name=mode]:checked').value==='B';
 document.querySelectorAll('input[name=mode]').forEach(el=>el.onchange=()=>{
-  $("connWrap").classList.toggle('hidden', document.querySelector('input[name=mode]:checked').value!=='B');
+  document.querySelectorAll('.b-only').forEach(e=>e.classList.toggle('hidden', !isB()));
 });
+
+// GPS取得→逆ジオコーディング（無料/キー不要のBigDataCloud, 日本語）。失敗時はnull。
+function getGpsLocation(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      try{
+        const {latitude:la, longitude:lo}=pos.coords;
+        const r=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${la}&longitude=${lo}&localityLanguage=ja`);
+        const d=await r.json();
+        const loc=[d.principalSubdivision, d.city||d.locality].filter(Boolean).join(' ');
+        resolve(loc||null);
+      }catch(_){ resolve(null); }
+    }, _=>resolve(null), {enableHighAccuracy:false, timeout:8000, maximumAge:60000});
+  });
+}
 
 async function join(){
   const name=$("name").value.trim(), passcode=$("passcode").value.trim();
@@ -104,9 +124,14 @@ async function join(){
   const mode=document.querySelector('input[name=mode]:checked').value;
   const connectMode=document.querySelector('input[name=conn]:checked').value;
   if(!name||!passcode||!language){ $("msg").textContent="お名前・言語・端末コードを入力してください"; return; }
+  let gpsLocation=null;
+  if(mode==='B' && $("useGps") && $("useGps").checked){
+    $("msg").textContent="現在地を取得中...（許可ダイアログに応答してください）";
+    gpsLocation=await getGpsLocation();
+  }
   $("msg").textContent="受付中...";
   const resp=await fetch("/api/user/join",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name,passcode,language,mode,connectMode})});
+    body:JSON.stringify({name,passcode,language,mode,connectMode,gpsLocation})});
   const data=await resp.json();
   if(!resp.ok){ $("msg").textContent=data.error||"受付に失敗しました"; return; }
   sessionId=data.sessionId;
