@@ -1,0 +1,65 @@
+# 通訳コールセンター PoC — VPS 公開デプロイ（全サービス Docker 一括 / host networking）
+#
+# 構成: Caddy(HTTPS/Let's Encrypt) + Redis + LiveKit(SFU+埋め込みTURN) + Egress(録画) + token-server(web/API)
+# host networking を使うため Linux 専用。ポートは firewall で制御する（README参照）。
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    network_mode: host
+    # ループバックのみ待受（公開しない）。host net でも 127.0.0.1 に限定
+    command: ["redis-server", "--bind", "127.0.0.1", "--save", "60", "1", "--loglevel", "warning"]
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:z
+    depends_on:
+      - redis
+
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:z
+      - ./recordings:/out:z
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      - redis
+      - livekit
+
+  token-server:
+    build:
+      context: ../livekit-poc
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./data:/data:z        # SQLite（通話履歴・イベント・マスタ）の永続化
+    depends_on:
+      - livekit
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:z
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - token-server
+      - livekit
+
+volumes:
+  caddy_data:
+  caddy_config:

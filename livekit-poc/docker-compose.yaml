@@ -1,0 +1,44 @@
+# LiveKit セルフホスト PoC 用 docker-compose
+# Option 2（Redisあり・本番に近い構成）で使用します。
+# 最速で試すだけなら README の Option 1（livekit-server --dev）を推奨。
+#
+# 注意: Linux では media(UDP) の都合上 network_mode: host が最適です。
+#       Windows/Mac の Docker Desktop は host モード非対応のためポート公開で代替します
+#       （同一PCの2タブでの疎通確認は可能。別端末/公開時は Linux host か公開サーバ＋TURN が必要）。
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: livekit-redis
+    ports:
+      - "6379:6379"
+    # 本番では必ずプライベート網に閉じ、認証(requirepass)を設定すること
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit-server
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"        # signaling / HTTP (wsで接続)
+      - "7881:7881"        # RTC over TCP
+      - "7882:7882/udp"    # RTC over UDP (メディア)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    depends_on:
+      - redis
+
+  # 録画サービス。livekit と同じ Redis / api鍵で連携し、ヘッドレスChromeで通話を合成しMP4保存
+  egress:
+    image: livekit/egress:latest
+    container_name: livekit-egress
+    restart: unless-stopped
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml
+      - ./recordings:/out        # 録画MP4の出力先（ホストの ./recordings に保存）
+    cap_add:
+      - SYS_ADMIN                 # ヘッドレスChrome動作のため
+    depends_on:
+      - redis
+      - livekit

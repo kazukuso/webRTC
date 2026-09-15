@@ -1,0 +1,17 @@
+# GIP直打ち（ドメイン無し・自己署名HTTPS） — 103.96.112.21
+# 単一IPのためパスで振り分け:
+#   /rtc* /twirp*  → LiveKit(7880)   （ブラウザの wss://103.96.112.21/rtc シグナリング）
+#   それ以外        → token-server(3001)（Web/API）
+# tls internal = Caddy内部CAの自己署名。ブラウザ警告が出るが「続行」でHTTPS扱い（カメラ可）。
+
+https://103.96.112.21 {
+    tls internal
+
+    @livekit path /rtc* /twirp*
+    handle @livekit {
+        reverse_proxy 127.0.0.1:7880
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3001
+    }
+}

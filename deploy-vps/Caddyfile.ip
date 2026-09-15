@@ -1,0 +1,20 @@
+# GIP直打ち用（ドメイン無し・自己署名HTTPS）
+# 使い方: このファイルの内容を Caddyfile に上書きコピーして使う（YOUR_GIP を実IPに置換）
+#   cp Caddyfile.ip Caddyfile   （YOUR_GIP を書き換え）
+#
+# 単一IPなのでサブドメインが使えない → パスで振り分け:
+#   /rtc* /twirp*  → LiveKit(7880)   （ブラウザの wss://<GIP>/rtc シグナリング）
+#   それ以外        → token-server(3001)（Web/API）
+# tls internal = Caddyの内部CAで自己署名。ブラウザ警告が出るが、続行すればHTTPS扱い（カメラ可）。
+
+https://YOUR_GIP {
+    tls internal
+
+    @livekit path /rtc* /twirp*
+    handle @livekit {
+        reverse_proxy 127.0.0.1:7880
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3001
+    }
+}

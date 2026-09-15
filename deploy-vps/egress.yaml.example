@@ -1,0 +1,9 @@
+# LiveKit Egress（録画）設定 — VPS
+log_level: info
+# ↓ livekit.yaml / .env と同じ api_key / secret にそろえる
+api_key: APIkey_REPLACE_ME
+api_secret: "SECRET_REPLACE_ME_32chars_or_more________________"
+ws_url: ws://127.0.0.1:7880    # host net なので同ホストの livekit へ
+redis:
+  address: 127.0.0.1:6379
+# 出力はリクエスト側でファイルパス(/out/...)指定。/out は ./recordings にマウント

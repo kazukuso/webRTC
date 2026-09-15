@@ -1,0 +1,23 @@
+# ---- 依存・生成物（コミットしない） ----
+**/node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# ---- 秘密情報（VPS/ローカルにのみ置く。.example のみ追跡） ----
+**/.env
+!**/.env.example
+deploy-vps/livekit.yaml
+deploy-vps/egress.yaml
+livekit-poc/livekit.yaml
+livekit-poc/egress.yaml
+
+# ---- 永続データ・録画（サーバ上にのみ存在） ----
+deploy-vps/data/
+deploy-vps/recordings/
+livekit-poc/token-server/data/
+livekit-poc/recordings/
+
+# 雛形は追跡する（除外の例外）
+!deploy-vps/livekit.yaml.example
+!deploy-vps/egress.yaml.example

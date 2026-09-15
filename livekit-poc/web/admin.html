@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>管理コンソール - 通訳PoC</title>
+<style>
+  :root{--accent:#1f4e79;}
+  *{box-sizing:border-box;}
+  body{font-family:system-ui,"Segoe UI",sans-serif;margin:0;background:#eef1f5;color:#1a2330;}
+  header{background:var(--accent);color:#fff;padding:12px 18px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;}
+  header .logout{font-size:12px;background:#ffffff22;border:1px solid #ffffff55;color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;}
+  .wrap{max-width:1100px;margin:18px auto;padding:0 14px;}
+  .card{background:#fff;border:1px solid #dfe3ea;border-radius:10px;padding:16px;margin-bottom:14px;}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
+  .tabs button{border:1px solid #cfd6e0;background:#fff;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;}
+  .tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  h3{margin:0 0 10px;font-size:15px;color:var(--accent);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{border:1px solid #e3e7ee;padding:6px 8px;text-align:left;}
+  th{background:#f2f5f9;}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
+  .kpi .box{background:#f7f9fc;border:1px solid #e3e7ee;border-radius:8px;padding:12px;text-align:center;}
+  .kpi .box .n{font-size:26px;font-weight:bold;color:var(--accent);}
+  .kpi .box .l{font-size:12px;color:#66707d;margin-top:4px;}
+  .pill{font-size:12px;padding:2px 8px;border-radius:12px;background:#eef1f5;}
+  .pill.avail{background:#dff5e3;color:#1a7f37;}.pill.busy{background:#fde7e7;color:#b3261e;}.pill.offline{background:#eceff3;color:#8a94a3;}
+  .rec{color:#b3261e;font-weight:bold;}
+  input,select{padding:7px 8px;border:1px solid #cfd6e0;border-radius:6px;font-size:13px;}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer;}
+  button.ghost{background:#eef1f5;border:0;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .muted{color:#66707d;font-size:12px;}
+  #login{max-width:360px;margin:80px auto;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<header>
+  <span>通訳コールセンター 管理コンソール</span>
+  <button class="logout hidden" id="logoutBtn">ログアウト</button>
+</header>
+
+<!-- ログイン -->
+<div class="wrap" id="loginWrap">
+  <div class="card" id="login">
+    <h3>管理者ログイン</h3>
+    <div class="row">
+      <input id="pw" type="password" placeholder="管理者パスワード" style="flex:1" />
+      <button class="act" id="loginBtn">ログイン</button>
+    </div>
+    <div id="loginMsg" class="muted" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- 本体 -->
+<div class="wrap hidden" id="app">
+  <div class="tabs">
+    <button data-tab="monitor" class="active">リアルタイム監視</button>
+    <button data-tab="calls">通話履歴</button>
+    <button data-tab="report">稼働レポート</button>
+    <button data-tab="masters">マスタ管理</button>
+    <button data-tab="events">ログ</button>
+  </div>
+
+  <div id="tab-monitor" class="tabpage">
+    <div class="card"><h3>待機中（言語別）</h3><div id="waitBox" class="kpi"></div></div>
+    <div class="card"><h3>対応中の通話</h3><table id="activeTbl"><thead><tr><th>顧客</th><th>地域</th><th>言語</th><th>パターン</th><th>通訳者</th><th>案内人</th><th>録画</th><th>経過</th></tr></thead><tbody></tbody></table></div>
+    <div class="card"><h3>在席スタッフ</h3><table id="staffTbl"><thead><tr><th>種別</th><th>名前</th><th>対応言語</th><th>状態</th></tr></thead><tbody></tbody></table></div>
+    <div class="muted">3秒ごとに自動更新</div>
+  </div>
+
+  <div id="tab-calls" class="tabpage hidden">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px;">
+        <select id="fLang"><option value="">全言語</option></select>
+        <select id="fStatus"><option value="">全状態</option><option value="ended">完了</option><option value="abandoned">放棄</option><option value="active">対応中</option><option value="waiting">待機</option></select>
+        <button class="ghost" id="callsReload">更新</button>
+        <a id="csvLink" class="ghost" style="text-decoration:none;">CSVダウンロード</a>
+      </div>
+      <table id="callsTbl"><thead><tr><th>ID</th><th>受付</th><th>顧客</th><th>地域</th><th>言語</th><th>種別</th><th>通訳者</th><th>案内人</th><th>待ち(s)</th><th>通話(s)</th><th>録画</th><th>状態</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div id="tab-report" class="tabpage hidden">
+    <div class="card"><h3>サマリ（全期間）</h3><div id="kpiBox" class="kpi"></div></div>
+    <div class="card"><h3>言語別</h3><table id="repTbl"><thead><tr><th>言語</th><th>件数</th><th>応答</th><th>放棄</th><th>平均待ち(s)</th><th>平均通話(s)</th></tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div id="tab-masters" class="tabpage hidden">
+    <div class="card">
+      <h3>言語マスタ</h3>
+      <table id="langTbl"><thead><tr><th>コード</th><th>表示名</th><th>有効</th><th>順</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row" style="margin-top:10px;">
+        <input id="lCode" placeholder="code (例 th)" style="width:110px" />
+        <input id="lLabel" placeholder="表示名 (例 ไทย（タイ語）)" style="flex:1" />
+        <input id="lOrder" type="number" placeholder="順" style="width:70px" />
+        <button class="act" id="lAdd">追加/更新</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">※ 言語はここに追加するだけで受付・割当に反映されます。</div>
+    </div>
+    <div class="card">
+      <h3>端末マスタ（モード/接続方式）</h3>
+      <table id="termTbl"><thead><tr><th>ID</th><th>名称</th><th>モード</th><th>接続</th><th>既定言語</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row" style="margin-top:10px;">
+        <input id="tId" placeholder="端末ID (例 kiosk-01)" style="width:130px" />
+        <input id="tName" placeholder="名称" style="flex:1" />
+        <select id="tMode"><option value="A">A</option><option value="B">B</option></select>
+        <select id="tConn"><option value="both">両者確保</option><option value="staged">段階接続</option></select>
+        <select id="tLang"><option value="">既定言語なし</option></select>
+        <button class="act" id="tAdd">追加/更新</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">※ 登録すると利用者端末画面(/user.html)で端末を選べます。</div>
+    </div>
+  </div>
+
+  <div id="tab-events" class="tabpage hidden">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px;"><button class="ghost" id="evReload">更新</button></div>
+      <table id="evTbl"><thead><tr><th>日時</th><th>種別</th><th>操作者</th><th>詳細</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=(s)=>document.querySelector(s);
+let token=localStorage.getItem('adminToken')||null;
+const api=(p,opt={})=>fetch(p,{...opt,headers:{'Content-Type':'application/json','x-admin-token':token,...(opt.headers||{})}});
+const fmt=(ms)=>ms?new Date(ms).toLocaleString('ja-JP',{hour12:false}):'';
+const esc=(s)=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const pill=(s)=>`<span class="pill ${s==='available'?'avail':s==='busy'?'busy':'offline'}">${s==='available'?'応対可':s==='busy'?'対応中':'離席'}</span>`;
+
+async function doLogin(){
+  const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#pw').value})});
+  const d=await r.json();
+  if(!r.ok){ $('#loginMsg').textContent=d.error||'ログイン失敗'; return; }
+  token=d.token; localStorage.setItem('adminToken',token); showApp();
+}
+function showApp(){ $('#loginWrap').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logoutBtn').classList.remove('hidden'); initLangSelectors(); switchTab('monitor'); startMonitor(); }
+function logout(){ token=null; localStorage.removeItem('adminToken'); location.reload(); }
+
+let monitorTimer=null;
+function switchTab(name){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  document.querySelectorAll('.tabpage').forEach(p=>p.classList.add('hidden'));
+  $('#tab-'+name).classList.remove('hidden');
+  if(name==='monitor') startMonitor(); else stopMonitor();
+  if(name==='calls') loadCalls();
+  if(name==='report') loadReport();
+  if(name==='masters'){ loadLangs(); loadTerms(); }
+  if(name==='events') loadEvents();
+}
+function startMonitor(){ stopMonitor(); loadOverview(); monitorTimer=setInterval(loadOverview,3000); }
+function stopMonitor(){ if(monitorTimer) clearInterval(monitorTimer); monitorTimer=null; }
+
+async function guard(r){ if(r.status===401){ logout(); throw new Error('unauth'); } return r; }
+
+async function loadOverview(){
+  const d=await (await guard(await api('/api/admin/overview'))).json();
+  $('#waitBox').innerHTML=Object.values(d.waitingByLang).map(w=>`<div class="box"><div class="n">${w.count}</div><div class="l">${esc(w.label)}</div></div>`).join('')||'<div class="muted">対応言語なし</div>';
+  $('#activeTbl tbody').innerHTML=d.activeCalls.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.location)||'-'}</td><td>${esc(c.language)}</td><td>${c.mode}</td><td>${esc(c.interpreter)}</td><td>${esc(c.guide)||'-'}</td><td>${c.recording?'<span class=rec>●REC</span>':'-'}</td><td>${c.talkSec}s</td></tr>`).join('')||'<tr><td colspan=8 class=muted>なし</td></tr>';
+  const staff=[...d.interpreters.map(i=>({t:'通訳',...i})),...d.guides.map(g=>({t:'案内',langs:['-'],...g}))];
+  $('#staffTbl tbody').innerHTML=staff.map(s=>`<tr><td>${s.t}</td><td>${esc(s.name)}</td><td>${(s.languages||['-']).join(', ')}</td><td>${pill(s.status)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>在席なし</td></tr>';
+}
+async function loadCalls(){
+  const q=new URLSearchParams({lang:$('#fLang').value,status:$('#fStatus').value,limit:300});
+  $('#csvLink').href='/api/admin/calls.csv?'+q; $('#csvLink').onclick=(e)=>{e.preventDefault();downloadCsv(q);};
+  const rows=await (await guard(await api('/api/admin/calls?'+q))).json();
+  $('#callsTbl tbody').innerHTML=rows.map(r=>`<tr><td>${r.id}</td><td>${fmt(r.enqueued_at)}</td><td>${esc(r.name)}</td><td>${esc(r.location)||'-'}</td><td>${esc(r.language)}</td><td>${r.mode||''}</td><td>${esc(r.interpreter_name)||'-'}</td><td>${esc(r.guide_name)||'-'}</td><td>${r.wait_sec??''}</td><td>${r.talk_sec??''}</td><td>${r.recorded?'●':''}</td><td>${r.status}</td></tr>`).join('')||'<tr><td colspan=12 class=muted>履歴なし</td></tr>';
+}
+async function downloadCsv(q){ const r=await guard(await api('/api/admin/calls.csv?'+q)); const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download='calls.csv'; a.click(); URL.revokeObjectURL(u); }
+async function loadReport(){
+  const d=await (await guard(await api('/api/admin/report'))).json();
+  $('#kpiBox').innerHTML=[['総受付',d.total],['応答',d.answered],['放棄',d.abandoned],['応答率',d.answerRate+'%'],['平均待ち',d.avgWaitSec+'s'],['平均通話',d.avgTalkSec+'s'],['録画数',d.recorded]].map(([l,n])=>`<div class="box"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#repTbl tbody').innerHTML=Object.values(d.byLang).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.total}</td><td>${b.answered}</td><td>${b.abandoned}</td><td>${b.avgWait}</td><td>${b.avgTalk}</td></tr>`).join('');
+}
+async function loadLangs(){
+  const rows=await (await guard(await api('/api/admin/languages'))).json();
+  $('#langTbl tbody').innerHTML=rows.map(r=>`<tr><td>${esc(r.code)}</td><td>${esc(r.label)}</td><td>${r.enabled?'✓':'—'}</td><td>${r.sort_order}</td><td><button class=ghost onclick="toggleLang('${r.code}','${esc(r.label)}',${r.enabled?0:1},${r.sort_order})">${r.enabled?'無効化':'有効化'}</button> <button class=ghost onclick="delLang('${r.code}')">削除</button></td></tr>`).join('');
+}
+window.toggleLang=async(code,label,enabled,sort)=>{ await api('/api/admin/languages',{method:'POST',body:JSON.stringify({code,label,enabled,sort_order:sort})}); loadLangs(); initLangSelectors(); };
+window.delLang=async(code)=>{ if(!confirm(code+' を削除しますか？'))return; await api('/api/admin/languages/delete',{method:'POST',body:JSON.stringify({code})}); loadLangs(); initLangSelectors(); };
+async function addLang(){ const code=$('#lCode').value.trim(),label=$('#lLabel').value.trim(); if(!code||!label)return; await api('/api/admin/languages',{method:'POST',body:JSON.stringify({code,label,enabled:1,sort_order:Number($('#lOrder').value)||0})}); $('#lCode').value='';$('#lLabel').value='';$('#lOrder').value=''; loadLangs(); initLangSelectors(); }
+async function loadTerms(){
+  const rows=await (await guard(await api('/api/admin/terminals'))).json();
+  $('#termTbl tbody').innerHTML=rows.map(r=>`<tr><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td>${r.mode}</td><td>${r.connect_mode}</td><td>${esc(r.default_language)||'-'}</td><td><button class=ghost onclick="delTerm('${esc(r.id)}')">削除</button></td></tr>`).join('')||'<tr><td colspan=6 class=muted>未登録</td></tr>';
+}
+window.delTerm=async(id)=>{ if(!confirm(id+' を削除しますか？'))return; await api('/api/admin/terminals/delete',{method:'POST',body:JSON.stringify({id})}); loadTerms(); };
+async function addTerm(){ const id=$('#tId').value.trim(),name=$('#tName').value.trim(); if(!id||!name)return; await api('/api/admin/terminals',{method:'POST',body:JSON.stringify({id,name,mode:$('#tMode').value,connect_mode:$('#tConn').value,default_language:$('#tLang').value})}); $('#tId').value='';$('#tName').value=''; loadTerms(); }
+async function loadEvents(){
+  const rows=await (await guard(await api('/api/admin/events?limit=300'))).json();
+  $('#evTbl tbody').innerHTML=rows.map(r=>`<tr><td>${fmt(r.ts)}</td><td>${esc(r.type)}</td><td>${esc(r.actor)}</td><td class=muted>${esc(r.detail||'')}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>ログなし</td></tr>';
+}
+async function initLangSelectors(){
+  const rows=await (await guard(await api('/api/admin/languages'))).json();
+  const opts='<option value="">全言語</option>'+rows.map(r=>`<option value="${r.code}">${esc(r.label)}</option>`).join('');
+  $('#fLang').innerHTML=opts;
+  $('#tLang').innerHTML='<option value="">既定言語なし</option>'+rows.map(r=>`<option value="${r.code}">${esc(r.label)}</option>`).join('');
+}
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+$('#loginBtn').onclick=doLogin;
+$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+$('#logoutBtn').onclick=logout;
+$('#callsReload').onclick=loadCalls;
+$('#evReload').onclick=loadEvents;
+$('#lAdd').onclick=addLang;
+$('#tAdd').onclick=addTerm;
+
+// 起動時：トークンがあれば検証
+if(token){ api('/api/admin/overview').then(r=>{ if(r.ok) showApp(); else logout(); }).catch(()=>logout()); }
+</script>
+</body>
+</html>

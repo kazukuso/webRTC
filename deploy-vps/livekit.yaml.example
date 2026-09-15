@@ -1,0 +1,18 @@
+# LiveKit server 設定（VPS公開）
+port: 7880                    # signaling/HTTP。Caddyが443→ここへTLS終端して中継（外部には7880を開けない）
+rtc:
+  tcp_port: 7881             # WebRTC over TCP フォールバック
+  port_range_start: 50000    # メディア(UDP)レンジ。firewallで開ける
+  port_range_end: 60000
+  use_external_ip: true      # VPSのグローバルIPを広告（公開の要）
+redis:
+  address: 127.0.0.1:6379
+turn:
+  enabled: true              # 埋め込みTURN（UDP）。NAT/FW越えの救済
+  udp_port: 3478
+keys:
+  # ↓ README手順で generate-keys の値に置き換える（.env / egress.yaml と一致させる）
+  APIkey_REPLACE_ME: "SECRET_REPLACE_ME_32chars_or_more________________"
+logging:
+  level: info
+# TURN/TLS(5349,443) を使う場合は README「TURN/TLSの強化」を参照（turn.external_tls + Caddy layer4）

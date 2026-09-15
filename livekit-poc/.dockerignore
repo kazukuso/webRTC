@@ -1,0 +1,4 @@
+token-server/node_modules
+token-server/.env
+recordings
+**/*.log
