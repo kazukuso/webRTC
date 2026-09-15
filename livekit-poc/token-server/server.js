@@ -74,15 +74,16 @@ const JP_PREF = {
 function geoOf(req) {
   const ip = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
   const g = ip ? geoip.lookup(ip) : null;
-  if (!g) return { location: 'ローカル/不明', country: '' };
+  const dbg = { ip, region: g?.region || '', city: g?.city || '', v6: ip.includes(':') };
+  if (!g) return { location: 'ローカル/不明', country: '', ...dbg };
   if (g.country === 'JP') {
     const pref = JP_PREF[g.region] || g.region || '';
     const city = g.city || '';                    // 市区町村（無料DBは英字表記）
     const loc = [pref, city].filter(Boolean).join(' ') || '日本';
-    return { location: loc, country: 'JP' };
+    return { location: loc, country: 'JP', ...dbg };
   }
   const loc = [g.city, g.region, g.country].filter(Boolean).join(', ');
-  return { location: loc || g.country || '不明', country: g.country || '' };
+  return { location: loc || g.country || '不明', country: g.country || '', ...dbg };
 }
 
 if (db.prepare('SELECT COUNT(*) c FROM languages').get().c === 0) {
@@ -187,7 +188,7 @@ app.post('/api/user/join', (req, res) => {
     .run(id, name, language, mode, cm, now, 'waiting', geo.location, geo.country);
   sessions.set(id, { id, name, language, mode, connectMode: cm, status: 'waiting', room: null, interpreterId: null, guideId: null, needGuide: false, lastSeen: now, enqueuedAt: now, assignedAt: null, callId: info.lastInsertRowid, location: geo.location });
   queue.push(id);
-  logEvent('user_join', name, { session: id, language, mode, location: geo.location });
+  logEvent('user_join', name, { session: id, language, mode, location: geo.location, ip: geo.ip, region: geo.region, city: geo.city, v6: geo.v6 });
   tryAssign();
   res.json({ sessionId: id });
 });
