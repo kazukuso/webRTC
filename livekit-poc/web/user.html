@@ -90,7 +90,7 @@
 </div>
 <script>
 const $ = (id)=>document.getElementById(id);
-let sessionId=null, polling=null, connected=false;
+let sessionId=null, polling=null, connected=false, hb=null;
 
 // 言語マスタから選択肢生成
 fetch('/api/languages').then(r=>r.json()).then(list=>{
@@ -150,9 +150,15 @@ async function poll(){
     if(s.guidePending) $("waitMsg").textContent="通訳者と接続しました。案内人が参加します…";
     await CallUI.connect(s.url, s.token, {localVideo:$("localVideo"), remoteContainer:$("remotes")});
     if(s.guidePending) setTimeout(()=>{ $("waitMsg").textContent=""; }, 8000);
+    // 通話中も低頻度で生存通知（サーバの切断検出のため）。終了検知でリロード。
+    hb=setInterval(()=>{
+      fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId)).then(r=>r.json())
+        .then(x=>{ if(x&&x.status!=='assigned'&&x.status!=='waiting'){ clearInterval(hb); CallUI.disconnect(); } })
+        .catch(()=>{});
+    }, 5000);
   }
 }
-function leave(){ clearInterval(polling); CallUI.disconnect(); location.reload(); }
+function leave(){ clearInterval(polling); clearInterval(hb); CallUI.disconnect(); location.reload(); }
 
 $("joinBtn").onclick=join;
 $("cancelBtn").onclick=leave;

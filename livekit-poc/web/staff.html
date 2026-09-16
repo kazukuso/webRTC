@@ -109,9 +109,10 @@ function setState(s){
   p.className="pill"+(s==="available"?" avail":(s==="busy"?" busy":""));
 }
 async function poll(){
-  if(!staffId||inCall) return;
-  const r=await fetch("/api/staff/poll?staffId="+encodeURIComponent(staffId));
-  const d=await r.json();
+  if(!staffId) return;
+  let d;
+  try{ d=await (await fetch("/api/staff/poll?staffId="+encodeURIComponent(staffId))).json(); }catch(_){ return; }
+  if(inCall) return; // 通話中は上のfetchで生存通知だけ行い、再着信処理はしない
   // 待機情報
   if(role==='guide') $("waitInfo").textContent = "案内人待ちのB通話: "+(d.guideNeeded??0)+" 件";
   else if(d.waitingByLang){ $("waitInfo").textContent = "待機中: "+Object.entries(d.waitingByLang).map(([k,v])=>`${k}:${v}`).join(' / '); }
