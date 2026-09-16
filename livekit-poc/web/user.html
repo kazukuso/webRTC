@@ -39,6 +39,10 @@
     </div>
     <button class="primary" id="joinBtn">通訳を呼ぶ</button>
     <div id="msg"></div>
+    <div id="cardStatus" class="hidden" style="margin-top:12px;font-size:13px;color:#333;padding:10px;border:1px solid #e2e5ea;border-radius:8px;background:#fafbfc;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+      <span id="cardText"></span>
+      <button class="ghost" id="cardBtn">カード登録</button>
+    </div>
   </div>
 
   <div class="card hidden" id="waitCard">
@@ -56,6 +60,10 @@
       <div id="remotes" style="display:contents;"></div>
     </div>
     <div id="waitMsg"></div>
+    <div id="billBar" class="hidden" style="margin-top:10px;padding:10px 12px;background:#fff8e6;border:1px solid #f0d98a;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <span id="billText" style="font-size:14px;"></span>
+      <button class="primary" id="extendBtn" style="width:auto;margin:0;padding:8px 16px;">延長する（+¥<span id="extPrice">0</span>）</button>
+    </div>
     <div class="controls">
       <button class="ghost" id="micBtn">マイク オフ</button>
       <button class="ghost" id="camBtn">カメラ オフ</button>
@@ -67,7 +75,7 @@
 <script>
 const $ = (id)=>document.getElementById(id);
 const token=localStorage.getItem('authToken');
-let me=null, sessionId=null, polling=null, connected=false, hb=null;
+let me=null, sessionId=null, polling=null, connected=false, hb=null, bill=null, billTick=null;
 
 // 認証チェック＋アカウント情報取得
 (async ()=>{
@@ -80,6 +88,10 @@ let me=null, sessionId=null, polling=null, connected=false, hb=null;
   if(me.mode==='B') $("gpsWrap").classList.remove('hidden');
   const list=await (await fetch('/api/languages')).json();
   $("language").innerHTML=list.map(l=>`<option value="${l.code}">${l.label}</option>`).join('');
+  await refreshCard();
+  const cp=new URLSearchParams(location.search).get('card');
+  if(cp==='ok') $("msg").textContent='カードを登録しました。';
+  else if(cp==='cancel') $("msg").textContent='カード登録をキャンセルしました。';
 })();
 
 function getGpsLocation(){
@@ -102,7 +114,7 @@ async function join(){
   const resp=await fetch("/api/user/join",{method:"POST",headers:{"Content-Type":"application/json","x-auth-token":token},
     body:JSON.stringify({language, gpsLocation:gps&&gps.location, gpsLat:gps&&gps.lat, gpsLon:gps&&gps.lon, gpsAcc:gps&&gps.acc})});
   const data=await resp.json();
-  if(!resp.ok){ $("msg").textContent=data.error||"受付に失敗しました"; return; }
+  if(!resp.ok){ $("msg").textContent=data.error||"受付に失敗しました"; if(data.needCard){ await refreshCard(); $("cardStatus").classList.remove("hidden"); } return; }
   sessionId=data.sessionId;
   $("formCard").classList.add("hidden"); $("waitCard").classList.remove("hidden");
   polling=setInterval(poll,1500); poll();
@@ -111,22 +123,72 @@ async function poll(){
   if(!sessionId||connected) return;
   const s=await (await fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId))).json();
   if(s.status==="waiting"){ $("pos").textContent=s.position; $("waitLang").textContent=s.language; }
+  else if(s.status==="preparing"){ $("pos").textContent="…"; $("waitLang").textContent="決済処理中"; }
+  else if(s.status==="payment_failed"){ clearInterval(polling); const m=s.error||"決済に失敗しました"; backToForm(); $("msg").textContent=m; await refreshCard(); $("cardStatus").classList.remove("hidden"); }
   else if(s.status==="assigned"){
     connected=true; clearInterval(polling);
     $("waitCard").classList.add("hidden"); $("callCard").classList.remove("hidden");
     if(s.guidePending) $("waitMsg").textContent="通訳者と接続しました。案内人が参加します…";
     await CallUI.connect(s.url, s.token, {localVideo:$("localVideo"), remoteContainer:$("remotes")});
     if(s.guidePending) setTimeout(()=>{ $("waitMsg").textContent=""; }, 8000);
+    setBilling(s.billing); startBillTick();
     hb=setInterval(()=>{ fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId)).then(r=>r.json())
-      .then(x=>{ if(x&&x.status!=='assigned'&&x.status!=='waiting'){ clearInterval(hb); CallUI.disconnect(); } }).catch(()=>{}); }, 5000);
+      .then(x=>{ if(!x) return;
+        if(x.status!=='assigned'&&x.status!=='waiting'){ endCall((bill&&bill.remainingSec<=0)?"通話が終了しました（ご利用時間の終了）":""); return; }
+        if(x.billing) setBilling(x.billing);
+      }).catch(()=>{}); }, 5000);
   }
 }
-function backToForm(){ clearInterval(polling); clearInterval(hb); CallUI.disconnect(); sessionId=null; connected=false;
+function backToForm(){ clearInterval(polling); clearInterval(hb); clearInterval(billTick); CallUI.disconnect(); sessionId=null; connected=false; bill=null;
+  $("billBar").classList.add("hidden");
   $("callCard").classList.add("hidden"); $("waitCard").classList.add("hidden"); $("formCard").classList.remove("hidden"); $("msg").textContent=""; }
+
+function setBilling(b){ bill=(b&&b.required)?b:null; if(bill) $("extPrice").textContent=bill.extPrice; updateBillUI(); }
+function updateBillUI(){
+  if(!bill){ $("billBar").classList.add("hidden"); return; }
+  $("billBar").classList.remove("hidden");
+  const rem=Math.max(0,bill.remainingSec|0), m=Math.floor(rem/60), sec=rem%60;
+  const warn=rem<=60?'　まもなく終了します':'';
+  $("billText").innerHTML=`残り <b>${m}:${String(sec).padStart(2,"0")}</b> ／ 現在の料金 ¥${bill.chargeTotal}（延長 +¥${bill.extPrice}／${bill.extUnitMin}分）<span style="color:#b3261e">${warn}</span>`;
+}
+function startBillTick(){ clearInterval(billTick); billTick=setInterval(()=>{ if(bill){ bill.remainingSec=Math.max(0,(bill.remainingSec|0)-1); updateBillUI(); } },1000); }
+async function extend(){
+  if(!sessionId) return; $("extendBtn").disabled=true;
+  try{
+    const r=await fetch("/api/user/extend",{method:"POST",headers:{"Content-Type":"application/json","x-auth-token":token},body:JSON.stringify({sessionId})});
+    const d=await r.json();
+    if(!r.ok){ alert(d.error||"延長できませんでした"); return; }
+    if(bill){ bill.remainingSec=d.remainingSec; bill.chargeTotal=d.chargeTotal; bill.extPrice=d.extPrice; bill.extUnitMin=d.extUnitMin; updateBillUI(); }
+  }catch(_){ alert("延長に失敗しました"); }
+  finally{ $("extendBtn").disabled=false; }
+}
+function endCall(msg){ clearInterval(hb); clearInterval(billTick); CallUI.disconnect(); backToForm(); if(msg) $("msg").textContent=msg; }
+
+async function refreshCard(){
+  try{
+    const c=await (await fetch('/api/user/card',{headers:{'x-auth-token':token}})).json();
+    if(!c.enabled){ $("cardStatus").classList.add('hidden'); return; }
+    $("cardStatus").classList.remove('hidden');
+    if(c.registered){ $("cardText").textContent='お支払いカード: '+(c.brand||'カード')+' ****'+(c.last4||'')+'（登録済み）'; $("cardBtn").textContent='カード変更'; }
+    else { $("cardText").textContent='お支払いカードが未登録です。通話の前に登録してください。'; $("cardBtn").textContent='カード登録'; }
+  }catch(_){}
+}
+async function registerCard(){
+  $("cardBtn").disabled=true;
+  try{
+    const r=await fetch('/api/user/card/session',{method:'POST',headers:{'Content-Type':'application/json','x-auth-token':token}});
+    const d=await r.json();
+    if(!r.ok||!d.url){ alert(d.error||'カード登録を開始できませんでした'); return; }
+    location.href=d.url;
+  }catch(_){ alert('カード登録の開始に失敗しました'); }
+  finally{ $("cardBtn").disabled=false; }
+}
 
 $("joinBtn").onclick=join;
 $("cancelBtn").onclick=backToForm;
 $("leaveBtn").onclick=backToForm;
+$("extendBtn").onclick=extend;
+$("cardBtn").onclick=registerCard;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
 $("logout").onclick=async(e)=>{ e.preventDefault(); try{await fetch('/api/auth/logout',{method:'POST',headers:{'x-auth-token':token}});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; };

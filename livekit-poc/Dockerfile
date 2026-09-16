@@ -13,7 +13,7 @@ WORKDIR /app/token-server
 RUN rm -f package-lock.json && rm -rf node_modules \
  && npm install --omit=dev --no-audit --no-fund
 # 依存の取りこぼしをビルド時に検証（欠けていればここで失敗する）
-RUN node -e "require('better-sqlite3');require('dotenv');require('express');require('cors');require('livekit-server-sdk');console.log('deps OK')"
+RUN node -e "require('better-sqlite3');require('dotenv');require('express');require('cors');require('livekit-server-sdk');require('stripe');console.log('deps OK')"
 
 WORKDIR /app
 ENV NODE_ENV=production

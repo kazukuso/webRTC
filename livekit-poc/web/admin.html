@@ -52,6 +52,7 @@
     <button data-tab="report">稼働レポート</button>
     <button data-tab="masters">マスタ管理</button>
     <button data-tab="users">ユーザー管理</button>
+    <button data-tab="billing">課金・売上</button>
     <button data-tab="events">ログ</button>
   </div>
 
@@ -125,10 +126,34 @@
           <select id="uMode"><option value="A">A</option><option value="B">B</option></select>
           <select id="uConn"><option value="both">両者確保</option><option value="staged">段階接続</option></select>
         </div>
+        <div id="uBillWrap"><div class="muted">課金(利用者)</div>
+          <select id="uBill"><option value="0">課金なし</option><option value="1">課金あり</option></select>
+          <select id="uBillMode"><option value="member">会員(保存カード)</option><option value="guest">ゲスト(都度)</option></select>
+        </div>
         <button class="act" id="uAdd">追加/更新</button>
         <button class="ghost" id="uClear">クリア</button>
       </div>
       <div class="muted" style="margin-top:6px;">利用者=ログイン後に言語を選ぶだけ（モードはここで設定）。通訳者=対応言語を選択。パスワードは編集時に空欄なら変更なし。</div>
+    </div>
+  </div>
+
+  <div id="tab-billing" class="tabpage hidden">
+    <div class="card">
+      <h3>課金設定（PPV）</h3>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap;">
+        <div><div class="muted">基本料(円/通話)</div><input id="bBase" type="number" style="width:120px"></div>
+        <div><div class="muted">基本ぶん(分)</div><input id="bMin" type="number" style="width:100px"></div>
+        <div><div class="muted">延長単位(分)</div><input id="bUnit" type="number" style="width:100px"></div>
+        <div><div class="muted">延長料(円/単位)</div><input id="bExt" type="number" style="width:120px"></div>
+        <div><div class="muted">猶予(秒)</div><input id="bGrace" type="number" style="width:90px"></div>
+        <button class="act" id="bSave">保存</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">課金は各ユーザー（受付端末）の「課金要否」がONの通話にのみ適用されます。猶予＝許容時間を過ぎてから自動終了するまでの秒数。※実決済(Stripe)接続はフェーズ2で追加。現状は金額の記録のみ。</div>
+    </div>
+    <div class="card"><h3>売上サマリ</h3><div id="bSum" class="kpi"></div></div>
+    <div class="card">
+      <h3>決済履歴</h3>
+      <table id="payTbl"><thead><tr><th>ID</th><th>日時</th><th>ユーザー</th><th>通話</th><th>種別</th><th>金額</th><th>状態</th><th>方法</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -161,6 +186,7 @@ function switchTab(name){
   if(name==='report') loadReport();
   if(name==='masters'){ loadLangs(); loadTerms(); }
   if(name==='users') loadUsers();
+  if(name==='billing') loadBilling();
   if(name==='events') loadEvents();
 }
 function startMonitor(){ stopMonitor(); loadOverview(); monitorTimer=setInterval(loadOverview,3000); }
@@ -205,6 +231,19 @@ async function loadEvents(){
   const rows=await (await guard(await api('/api/admin/events?limit=300'))).json();
   $('#evTbl tbody').innerHTML=rows.map(r=>`<tr><td>${fmt(r.ts)}</td><td>${esc(r.type)}</td><td>${esc(r.actor)}</td><td class=muted>${esc(r.detail||'')}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>ログなし</td></tr>';
 }
+async function loadBilling(){
+  const b=await (await guard(await api('/api/admin/billing'))).json();
+  $('#bBase').value=b.base_price; $('#bMin').value=b.base_minutes; $('#bUnit').value=b.ext_unit_minutes; $('#bExt').value=b.ext_price; $('#bGrace').value=b.grace_sec;
+  const p=await (await guard(await api('/api/admin/payments?limit=300'))).json();
+  const kinds=Object.fromEntries((p.summary.byKind||[]).map(k=>[k.kind,k.total]));
+  $('#bSum').innerHTML=[['売上合計','¥'+p.summary.total],['決済件数',p.summary.count],['基本料','¥'+(kinds.base||0)],['延長料','¥'+(kinds.extension||0)]].map(([l,n])=>`<div class="box"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#payTbl tbody').innerHTML=p.rows.map(r=>`<tr><td>${r.id}</td><td>${fmt(r.created_at)}</td><td>${esc(r.username)}</td><td>#${r.call_id||'-'}</td><td>${r.kind==='base'?'基本':'延長'}</td><td>¥${r.amount}</td><td>${esc(r.status)}</td><td>${esc(r.provider)}</td></tr>`).join('')||'<tr><td colspan=8 class=muted>決済なし</td></tr>';
+}
+async function saveBilling(){
+  const body={base_price:$('#bBase').value,base_minutes:$('#bMin').value,ext_unit_minutes:$('#bUnit').value,ext_price:$('#bExt').value,grace_sec:$('#bGrace').value};
+  const r=await api('/api/admin/billing',{method:'POST',body:JSON.stringify(body)}); const d=await r.json();
+  if(!r.ok){alert(d.error||'保存失敗');return;} alert('課金設定を保存しました'); loadBilling();
+}
 async function initLangSelectors(){
   const rows=await (await guard(await api('/api/admin/languages'))).json();
   const opts='<option value="">全言語</option>'+rows.map(r=>`<option value="${r.code}">${esc(r.label)}</option>`).join('');
@@ -215,7 +254,7 @@ async function initLangSelectors(){
 // ---- ユーザー管理 ----
 let editUserId=null;
 function roleLabel(r){ return {admin:'管理者',user:'利用者',interpreter:'通訳者',guide:'案内人'}[r]||r; }
-function uFieldToggle(){ const r=$('#uRole').value; $('#uLangWrap').style.display=r==='interpreter'?'':'none'; $('#uModeWrap').style.display=r==='user'?'':'none'; }
+function uFieldToggle(){ const r=$('#uRole').value; $('#uLangWrap').style.display=r==='interpreter'?'':'none'; $('#uModeWrap').style.display=r==='user'?'':'none'; $('#uBillWrap').style.display=r==='user'?'':'none'; }
 async function loadUsers(){
   // 言語チェックボックス生成
   const langs=await (await guard(await api('/api/admin/languages'))).json();
@@ -223,22 +262,23 @@ async function loadUsers(){
   uFieldToggle();
   const rows=await (await guard(await api('/api/admin/users'))).json();
   $('#usrTbl tbody').innerHTML=rows.map(u=>{
-    const extra=u.role==='interpreter'?(u.languages||[]).join(','):(u.role==='user'?('モード'+(u.mode||'A')):'-');
+    const extra=u.role==='interpreter'?(u.languages||[]).join(','):(u.role==='user'?('モード'+(u.mode||'A')+(u.billing_required?' / 課金'+(u.billing_mode==='guest'?'(ゲスト)':'(会員)'):'')):'-');
     return `<tr><td>${esc(u.username)}</td><td>${esc(u.display_name)}</td><td>${roleLabel(u.role)}</td><td>${esc(extra)}</td><td>${u.enabled?'✓':'—'}</td>
       <td><button class=ghost onclick='editUser(${JSON.stringify(u)})'>編集</button> <button class=ghost onclick="delUser(${u.id},'${esc(u.username)}')">削除</button></td></tr>`;
   }).join('')||'<tr><td colspan=6 class=muted>ユーザーなし</td></tr>';
 }
 window.editUser=(u)=>{ editUserId=u.id; $('#uName').value=u.username; $('#uDisp').value=u.display_name||''; $('#uPass').value=''; $('#uRole').value=u.role; uFieldToggle();
   $('#uMode').value=u.mode||'A'; $('#uConn').value=u.connect_mode||'both';
+  $('#uBill').value=u.billing_required?'1':'0'; $('#uBillMode').value=u.billing_mode||'member';
   document.querySelectorAll('.uLang').forEach(c=>c.checked=(u.languages||[]).includes(c.value));
   $('#uAdd').textContent='更新'; };
 window.delUser=async(id,name)=>{ if(!confirm(name+' を削除しますか？'))return; const r=await api('/api/admin/users/delete',{method:'POST',body:JSON.stringify({id})}); const d=await r.json(); if(!r.ok){alert(d.error||'削除失敗');return;} loadUsers(); };
-function clearUserForm(){ editUserId=null; $('#uName').value='';$('#uDisp').value='';$('#uPass').value=''; $('#uRole').value='user'; uFieldToggle(); document.querySelectorAll('.uLang').forEach(c=>c.checked=false); $('#uAdd').textContent='追加/更新'; }
+function clearUserForm(){ editUserId=null; $('#uName').value='';$('#uDisp').value='';$('#uPass').value=''; $('#uRole').value='user'; $('#uBill').value='0'; $('#uBillMode').value='member'; uFieldToggle(); document.querySelectorAll('.uLang').forEach(c=>c.checked=false); $('#uAdd').textContent='追加/更新'; }
 async function saveUser(){
   const username=$('#uName').value.trim(); if(!username){alert('ユーザー名は必須');return;}
   const role=$('#uRole').value;
   const languages=[...document.querySelectorAll('.uLang:checked')].map(c=>c.value);
-  const body={ id:editUserId||undefined, username, password:$('#uPass').value||undefined, role, display_name:$('#uDisp').value.trim()||username, languages, mode:$('#uMode').value, connect_mode:$('#uConn').value };
+  const body={ id:editUserId||undefined, username, password:$('#uPass').value||undefined, role, display_name:$('#uDisp').value.trim()||username, languages, mode:$('#uMode').value, connect_mode:$('#uConn').value, billing_required:Number($('#uBill').value)||0, billing_mode:$('#uBillMode').value };
   const r=await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)}); const d=await r.json();
   if(!r.ok){ alert(d.error||'保存失敗'); return; }
   clearUserForm(); loadUsers();
@@ -252,6 +292,7 @@ $('#lAdd').onclick=addLang;
 $('#tAdd').onclick=addTerm;
 $('#uAdd').onclick=saveUser;
 $('#uClear').onclick=clearUserForm;
+$('#bSave').onclick=saveBilling;
 $('#uRole').onchange=uFieldToggle;
 
 // 起動時：認証確認（管理者のみ）。未認証やロール不一致はログインページへ。

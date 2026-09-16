@@ -21,3 +21,7 @@ livekit-poc/recordings/
 # 雛形は追跡する（除外の例外）
 !deploy-vps/livekit.yaml.example
 !deploy-vps/egress.yaml.example
+
+# ---- バックアップ（コミットしない） ----
+*.bak
+*.bak-*

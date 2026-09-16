@@ -23,6 +23,12 @@ const {
 const LIVEKIT_HTTP_URL = (process.env.LIVEKIT_HTTP_URL || LIVEKIT_URL).replace(/^ws/, 'http');
 const egressClient = new EgressClient(LIVEKIT_HTTP_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
 
+// ---------- Stripe（実決済・フェーズ2。キー未設定なら記録のみのフェーズ1動作にフォールバック） ----------
+const { STRIPE_SECRET_KEY = '', STRIPE_PUBLISHABLE_KEY = '', STRIPE_WEBHOOK_SECRET = '', PUBLIC_BASE_URL = 'http://localhost:' + PORT } = process.env;
+let stripe = null;
+if (STRIPE_SECRET_KEY) { try { stripe = require('stripe')(STRIPE_SECRET_KEY); console.log('[stripe] 有効（実決済モード）'); } catch (e) { console.error('[stripe] SDK読み込み失敗（npm i stripe）:', e.message); } }
+const stripeEnabled = () => !!stripe;
+
 // ---------- DB ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(path.join(DATA_DIR, 'app.db'));
@@ -50,6 +56,31 @@ CREATE TABLE IF NOT EXISTS users (
 `);
 const ensureCol = (t, c, ty) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some((x) => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${ty}`); };
 ['location TEXT', 'country TEXT', 'lat REAL', 'lon REAL', 'accuracy REAL'].forEach((s) => { const [c, ty] = s.split(' '); ensureCol('calls', c, ty); });
+
+// ---- 課金（PPV）スキーマ（追加のみ・既定は課金OFF） ----
+db.exec(`
+CREATE TABLE IF NOT EXISTS settings ( key TEXT PRIMARY KEY, value TEXT );
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  call_id INTEGER, session_id TEXT, user_id INTEGER, username TEXT,
+  kind TEXT, amount INTEGER, currency TEXT DEFAULT 'jpy',
+  status TEXT DEFAULT 'recorded', provider TEXT DEFAULT 'none', provider_ref TEXT,
+  created_at INTEGER
+);
+`);
+ensureCol('users', 'billing_required', 'INTEGER DEFAULT 0');
+ensureCol('users', 'billing_mode', "TEXT DEFAULT 'member'");
+ensureCol('calls', 'billed', 'INTEGER DEFAULT 0');
+ensureCol('calls', 'charge_base', 'INTEGER DEFAULT 0');
+ensureCol('calls', 'charge_ext', 'INTEGER DEFAULT 0');
+ensureCol('calls', 'ext_count', 'INTEGER DEFAULT 0');
+ensureCol('calls', 'charge_total', 'INTEGER DEFAULT 0');
+ensureCol('calls', 'allowed_sec', 'INTEGER');
+ensureCol('calls', 'currency', 'TEXT');
+ensureCol('users', 'stripe_customer_id', 'TEXT');
+ensureCol('users', 'stripe_pm_id', 'TEXT');
+ensureCol('users', 'card_brand', 'TEXT');
+ensureCol('users', 'card_last4', 'TEXT');
 
 // パスワードハッシュ（scrypt・組み込みcrypto、追加依存なし）
 const hashPw = (pw) => { const salt = crypto.randomBytes(16).toString('hex'); return salt + ':' + crypto.scryptSync(pw, salt, 32).toString('hex'); };
@@ -79,6 +110,89 @@ const logEvent = (type, actor, detail) => db.prepare('INSERT INTO events(ts,type
 const enabledLangs = () => db.prepare('SELECT code,label FROM languages WHERE enabled=1 ORDER BY sort_order,code').all();
 const langLabel = (code) => (db.prepare('SELECT label FROM languages WHERE code=?').get(code)?.label || code);
 
+// ================= 課金（PPV）ヘルパ =================
+const BILLING_DEFAULTS = { base_price: 100, base_minutes: 5, ext_unit_minutes: 5, ext_price: 100, grace_sec: 15, currency: 'jpy' };
+const getSetting = (k) => db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
+const setSetting = (k, v) => db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, String(v));
+for (const [k, v] of Object.entries(BILLING_DEFAULTS)) { if (getSetting('billing_' + k) == null) setSetting('billing_' + k, v); }
+function getBilling() {
+  const g = (k) => getSetting('billing_' + k);
+  return {
+    base_price: Number(g('base_price')), base_minutes: Number(g('base_minutes')),
+    ext_unit_minutes: Number(g('ext_unit_minutes')), ext_price: Number(g('ext_price')),
+    grace_sec: Number(g('grace_sec')) || 0, currency: g('currency') || 'jpy',
+  };
+}
+function recordPayment(s, kind, amount, currency) {
+  db.prepare('INSERT INTO payments(call_id,session_id,user_id,username,kind,amount,currency,status,provider,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(s.callId, s.id, s.userId || null, s.username || '', kind, amount, currency, 'recorded', 'none', Date.now());
+}
+// ---- Stripeヘルパ ----
+async function ensureCustomer(urow) {
+  if (!stripe) return null;
+  if (urow.stripe_customer_id) return urow.stripe_customer_id;
+  const c = await stripe.customers.create({ name: urow.display_name || urow.username, metadata: { app: 'interpreter-poc', user_id: String(urow.id), username: urow.username } });
+  db.prepare('UPDATE users SET stripe_customer_id=? WHERE id=?').run(c.id, urow.id);
+  return c.id;
+}
+// 保存カードへ off-session 課金
+async function chargeOffSession(urow, amount, currency, meta) {
+  const cust = await ensureCustomer(urow);
+  if (!urow.stripe_pm_id) throw new Error('no_card');
+  const pi = await stripe.paymentIntents.create({ amount, currency, customer: cust, payment_method: urow.stripe_pm_id, off_session: true, confirm: true, metadata: meta });
+  if (pi.status !== 'succeeded') throw new Error('pi_status_' + pi.status);
+  return pi;
+}
+// Webhook処理（カード保存確定・決済結果の反映）
+async function handleStripeEvent(event) {
+  const t = event.type; const o = (event.data && event.data.object) || {};
+  if (t === 'checkout.session.completed' && o.mode === 'setup') {
+    const si = typeof o.setup_intent === 'string' ? await stripe.setupIntents.retrieve(o.setup_intent) : o.setup_intent;
+    const pmId = si && si.payment_method;
+    if (pmId && o.customer) {
+      let brand = null, last4 = null;
+      try { const pm = await stripe.paymentMethods.retrieve(pmId); brand = pm.card && pm.card.brand; last4 = pm.card && pm.card.last4; } catch (_) {}
+      db.prepare('UPDATE users SET stripe_pm_id=?,card_brand=?,card_last4=? WHERE stripe_customer_id=?').run(pmId, brand, last4, o.customer);
+      try { await stripe.customers.update(o.customer, { invoice_settings: { default_payment_method: pmId } }); } catch (_) {}
+      logEvent('card_registered', 'system', { customer: o.customer, brand, last4 });
+    }
+  } else if (t === 'payment_intent.succeeded') {
+    db.prepare("UPDATE payments SET status='paid' WHERE provider_ref=?").run(o.id);
+  } else if (t === 'payment_intent.payment_failed') {
+    db.prepare("UPDATE payments SET status='failed' WHERE provider_ref=?").run(o.id);
+  }
+}
+
+// 接続時の基本料課金。Stripe有効時は off-session 課金し、失敗なら通話を終了。
+function chargeBase(s) {
+  if (!s.billingRequired || s.baseCharged) return;
+  const b = s.billing || getBilling();
+  s.allowedSec = b.base_minutes * 60; s.extCount = 0; s.baseCharged = true; s.chargeTotal = b.base_price;
+  const st = stripeEnabled() ? 'pending' : 'recorded';
+  const info = db.prepare('INSERT INTO payments(call_id,session_id,user_id,username,kind,amount,currency,status,provider,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(s.callId, s.id, s.userId || null, s.username || '', 'base', b.base_price, b.currency, st, stripeEnabled() ? 'stripe' : 'none', Date.now());
+  s.basePaymentRowId = info.lastInsertRowid;
+  db.prepare('UPDATE calls SET billed=1,charge_base=?,charge_total=?,allowed_sec=?,ext_count=0,currency=? WHERE id=?')
+    .run(b.base_price, b.base_price, s.allowedSec, b.currency, s.callId);
+  logEvent('charge_base', s.username || '', { session: s.id, amount: b.base_price, allowedSec: s.allowedSec });
+  if (stripeEnabled()) { s.baseChargeState = 'pending'; settleBase(s); } else { s.baseChargeState = 'paid'; }
+}
+async function settleBase(s) {
+  try {
+    const urow = db.prepare('SELECT * FROM users WHERE id=?').get(s.userId);
+    const b = s.billing || getBilling();
+    const pi = await chargeOffSession(urow, b.base_price, b.currency, { app: 'interpreter-poc', kind: 'base', call_id: String(s.callId), session: s.id });
+    db.prepare("UPDATE payments SET status='paid',provider='stripe',provider_ref=? WHERE id=?").run(pi.id, s.basePaymentRowId);
+    s.baseChargeState = 'paid';
+    logEvent('charge_base_paid', s.username || '', { session: s.id, pi: pi.id, amount: b.base_price });
+  } catch (e) {
+    db.prepare("UPDATE payments SET status='failed',provider='stripe' WHERE id=?").run(s.basePaymentRowId);
+    s.baseChargeState = 'failed'; s.billingError = 'カード決済に失敗しました（カード登録をご確認ください）';
+    logEvent('charge_base_failed', s.username || '', { session: s.id, error: String(e.message || e) });
+    endSession(s);
+  }
+}
+
 const JP_PREF = { '01': '北海道', '02': '青森県', '03': '岩手県', '04': '宮城県', '05': '秋田県', '06': '山形県', '07': '福島県', '08': '茨城県', '09': '栃木県', '10': '群馬県', '11': '埼玉県', '12': '千葉県', '13': '東京都', '14': '神奈川県', '15': '新潟県', '16': '富山県', '17': '石川県', '18': '福井県', '19': '山梨県', '20': '長野県', '21': '岐阜県', '22': '静岡県', '23': '愛知県', '24': '三重県', '25': '滋賀県', '26': '京都府', '27': '大阪府', '28': '兵庫県', '29': '奈良県', '30': '和歌山県', '31': '鳥取県', '32': '島根県', '33': '岡山県', '34': '広島県', '35': '山口県', '36': '徳島県', '37': '香川県', '38': '愛媛県', '39': '高知県', '40': '福岡県', '41': '佐賀県', '42': '長崎県', '43': '熊本県', '44': '大分県', '45': '宮崎県', '46': '鹿児島県', '47': '沖縄県' };
 function geoOf(req) {
   const ip = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
@@ -96,6 +210,15 @@ function geoOf(req) {
 const app = express();
 app.set('trust proxy', true);
 app.use(cors());
+// Stripe Webhook（署名検証のため express.json より前・rawボディ）
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  if (!stripeEnabled()) return res.status(400).send('stripe disabled');
+  let event;
+  try { event = STRIPE_WEBHOOK_SECRET ? stripe.webhooks.constructEvent(req.body, req.get('stripe-signature'), STRIPE_WEBHOOK_SECRET) : JSON.parse(req.body.toString('utf8')); }
+  catch (e) { return res.status(400).send('signature error: ' + e.message); }
+  handleStripeEvent(event).catch((err) => console.error('[stripe] webhook handler error', err));
+  res.json({ received: true });
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'web')));
 
@@ -135,6 +258,7 @@ function tryAssign() {
       db.prepare('UPDATE calls SET assigned_at=?, wait_sec=?, interpreter_name=?, guide_name=?, status=? WHERE id=?')
         .run(s.assignedAt, Math.round((s.assignedAt - s.enqueuedAt) / 1000), nameOf(interpreters, s.interpreterId), nameOf(guides, s.guideId), 'active', s.callId);
       logEvent('assign', 'system', { session: s.id, language: s.language, mode: s.mode, interpreter: nameOf(interpreters, s.interpreterId), guide: nameOf(guides, s.guideId) });
+      chargeBase(s);
       changed = true;
     }
     for (const s of sessions.values()) {
@@ -184,6 +308,8 @@ app.post('/api/user/join', requireAuth('user'), (req, res) => {
   const { language, name, gpsLocation, gpsLat, gpsLon, gpsAcc } = req.body || {};
   if (!language) return res.status(400).json({ error: 'language は必須です' });
   if (!enabledLangs().some((l) => l.code === language)) return res.status(400).json({ error: '未対応の言語です' });
+  const bacct = db.prepare('SELECT billing_required, stripe_pm_id FROM users WHERE id=?').get(u.id) || {};
+  if (bacct.billing_required && stripeEnabled() && !bacct.stripe_pm_id) return res.status(402).json({ error: 'カードが未登録です。先に「カード登録」を行ってください。', needCard: true });
   const mode = u.mode || 'A';
   const cm = mode === 'B' ? (u.connectMode === 'staged' ? 'staged' : 'both') : null;
   const custName = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 40) : u.displayName;
@@ -196,7 +322,9 @@ app.post('/api/user/join', requireAuth('user'), (req, res) => {
   if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) { lat = null; lon = null; acc = null; }
   const info = db.prepare('INSERT INTO calls(session_id,name,language,mode,connect_mode,enqueued_at,status,location,country,lat,lon,accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(id, custName, language, mode, cm, now, 'waiting', location, geo.country, lat, lon, acc);
-  sessions.set(id, { id, name: custName, language, mode, connectMode: cm, status: 'waiting', room: null, interpreterId: null, guideId: null, needGuide: false, lastSeen: now, enqueuedAt: now, assignedAt: null, callId: info.lastInsertRowid, location });
+  const acct = db.prepare('SELECT billing_required,billing_mode FROM users WHERE id=?').get(u.id) || {};
+  const billingRequired = !!acct.billing_required; const billingMode = acct.billing_mode || 'member'; const bcfg = getBilling();
+  sessions.set(id, { id, name: custName, language, mode, connectMode: cm, status: 'waiting', room: null, interpreterId: null, guideId: null, needGuide: false, lastSeen: now, enqueuedAt: now, assignedAt: null, callId: info.lastInsertRowid, location, userId: u.id, username: u.username, billingRequired, billingMode, billing: bcfg, extCount: 0, baseCharged: false, allowedSec: billingRequired ? bcfg.base_minutes * 60 : null });
   queue.push(id);
   logEvent('user_join', custName, { session: id, language, mode, location, source: locSource, ip: geo.ip });
   tryAssign();
@@ -211,10 +339,68 @@ app.get('/api/user/status', async (req, res) => {
     return res.json({ status: 'waiting', position: pos, language: langLabel(s.language) });
   }
   if (s.status === 'assigned') {
+    if (s.billingRequired && stripeEnabled()) {
+      if (s.baseChargeState === 'failed') return res.json({ status: 'payment_failed', error: s.billingError || 'カード決済に失敗しました' });
+      if (s.baseChargeState !== 'paid') return res.json({ status: 'preparing' });
+    }
     const token = await issueToken(s.room, 'user-' + s.id, s.name, 'terminal');
-    return res.json({ status: 'assigned', room: s.room, url: LIVEKIT_URL, token, mode: s.mode, guidePending: s.mode === 'B' && !s.guideId });
+    let billing = null;
+    if (s.billingRequired) {
+      const b = s.billing || getBilling();
+      const talk = s.assignedAt ? Math.round((Date.now() - s.assignedAt) / 1000) : 0;
+      const allowed = s.allowedSec || b.base_minutes * 60;
+      billing = { required: true, talkSec: talk, allowedSec: allowed, remainingSec: Math.max(0, allowed - talk), extUnitMin: b.ext_unit_minutes, extPrice: b.ext_price, currency: b.currency, chargeTotal: s.chargeTotal || b.base_price, extCount: s.extCount || 0 };
+    }
+    return res.json({ status: 'assigned', room: s.room, url: LIVEKIT_URL, token, mode: s.mode, guidePending: s.mode === 'B' && !s.guideId, billing });
   }
+  if (s.billingError) return res.json({ status: 'payment_failed', error: s.billingError });
   return res.json({ status: s.status });
+});
+
+// 延長（明示ボタン・追加課金）。Stripe有効時は先に保存カードへ off-session 課金し、成功時のみ延長。失敗は402。
+app.post('/api/user/extend', requireAuth('user'), async (req, res) => {
+  const s = sessions.get(req.body?.sessionId);
+  if (!s || s.status !== 'assigned') return res.status(404).json({ error: '通話中ではありません' });
+  if (s.userId !== req.user.id) return res.status(403).json({ error: '権限がありません' });
+  if (!s.billingRequired) return res.status(400).json({ error: 'このアカウントは課金対象外です' });
+  const b = s.billing || getBilling();
+  let provider = 'none', providerRef = null, payStatus = 'recorded';
+  if (stripeEnabled()) {
+    try {
+      const urow = db.prepare('SELECT * FROM users WHERE id=?').get(s.userId);
+      const pi = await chargeOffSession(urow, b.ext_price, b.currency, { app: 'interpreter-poc', kind: 'extension', call_id: String(s.callId), session: s.id });
+      provider = 'stripe'; providerRef = pi.id; payStatus = 'paid';
+    } catch (e) {
+      logEvent('charge_ext_failed', s.username || '', { session: s.id, error: String(e.message || e) });
+      return res.status(402).json({ error: '延長の決済に失敗しました（カードをご確認ください）' });
+    }
+  }
+  s.extCount = (s.extCount || 0) + 1;
+  s.allowedSec = b.base_minutes * 60 + s.extCount * b.ext_unit_minutes * 60;
+  s.chargeTotal = (s.chargeTotal || b.base_price) + b.ext_price;
+  db.prepare('UPDATE calls SET ext_count=?,charge_ext=?,charge_total=?,allowed_sec=? WHERE id=?')
+    .run(s.extCount, s.extCount * b.ext_price, s.chargeTotal, s.allowedSec, s.callId);
+  db.prepare('INSERT INTO payments(call_id,session_id,user_id,username,kind,amount,currency,status,provider,provider_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(s.callId, s.id, s.userId || null, s.username || '', 'extension', b.ext_price, b.currency, payStatus, provider, providerRef, Date.now());
+  logEvent('charge_ext', s.username || '', { session: s.id, extCount: s.extCount, amount: b.ext_price });
+  const talk = s.assignedAt ? Math.round((Date.now() - s.assignedAt) / 1000) : 0;
+  res.json({ ok: true, extCount: s.extCount, allowedSec: s.allowedSec, remainingSec: Math.max(0, s.allowedSec - talk), chargeTotal: s.chargeTotal, extUnitMin: b.ext_unit_minutes, extPrice: b.ext_price });
+});
+
+// カード登録状態
+app.get('/api/user/card', requireAuth('user'), (req, res) => {
+  const u = db.prepare('SELECT stripe_customer_id,stripe_pm_id,card_brand,card_last4 FROM users WHERE id=?').get(req.user.id) || {};
+  res.json({ enabled: stripeEnabled(), registered: !!u.stripe_pm_id, brand: u.card_brand || null, last4: u.card_last4 || null });
+});
+// カード登録用 Checkout(setup) セッション作成
+app.post('/api/user/card/session', requireAuth('user'), async (req, res) => {
+  if (!stripeEnabled()) return res.status(400).json({ error: '決済が未設定です（管理者にお問い合わせください）' });
+  try {
+    const urow = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+    const cust = await ensureCustomer(urow);
+    const session = await stripe.checkout.sessions.create({ mode: 'setup', customer: cust, payment_method_types: ['card'], success_url: PUBLIC_BASE_URL + '/user.html?card=ok', cancel_url: PUBLIC_BASE_URL + '/user.html?card=cancel' });
+    res.json({ url: session.url });
+  } catch (e) { res.status(500).json({ error: 'カード登録セッションの作成に失敗: ' + e.message }); }
 });
 
 // ---------- スタッフ（role=interpreter/guide、アカウント連動）----------
@@ -324,21 +510,22 @@ app.post('/api/admin/languages', requireAuth('admin'), (req, res) => {
 app.post('/api/admin/languages/delete', requireAuth('admin'), (req, res) => { db.prepare('DELETE FROM languages WHERE code=?').run(req.body?.code); res.json({ ok: true }); });
 
 // マスタ: ユーザー
-app.get('/api/admin/users', requireAuth('admin'), (_q, res) => res.json(db.prepare('SELECT id,username,role,display_name,languages,mode,connect_mode,enabled FROM users ORDER BY role,username').all().map((u) => ({ ...u, languages: u.languages ? JSON.parse(u.languages) : [] }))));
+app.get('/api/admin/users', requireAuth('admin'), (_q, res) => res.json(db.prepare('SELECT id,username,role,display_name,languages,mode,connect_mode,enabled,billing_required,billing_mode FROM users ORDER BY role,username').all().map((u) => ({ ...u, languages: u.languages ? JSON.parse(u.languages) : [] }))));
 app.post('/api/admin/users', requireAuth('admin'), (req, res) => {
-  const { id, username, password, role, display_name, languages, mode, connect_mode, enabled = 1 } = req.body || {};
+  const { id, username, password, role, display_name, languages, mode, connect_mode, enabled = 1, billing_required = 0, billing_mode = 'member' } = req.body || {};
   if (!username || !role) return res.status(400).json({ error: 'username, role は必須' });
   if (!['admin', 'user', 'interpreter', 'guide'].includes(role)) return res.status(400).json({ error: 'role が不正' });
   const langs = Array.isArray(languages) ? JSON.stringify(languages) : null;
+  const br = billing_required ? 1 : 0; const bm = billing_mode === 'guest' ? 'guest' : 'member';
   try {
     if (id) {
       const ex = db.prepare('SELECT * FROM users WHERE id=?').get(id);
       if (!ex) return res.status(404).json({ error: 'not found' });
       const pass = password ? hashPw(password) : ex.pass;
-      db.prepare('UPDATE users SET username=?,pass=?,role=?,display_name=?,languages=?,mode=?,connect_mode=?,enabled=? WHERE id=?').run(username, pass, role, display_name || username, langs, mode || null, connect_mode || null, enabled ? 1 : 0, id);
+      db.prepare('UPDATE users SET username=?,pass=?,role=?,display_name=?,languages=?,mode=?,connect_mode=?,enabled=?,billing_required=?,billing_mode=? WHERE id=?').run(username, pass, role, display_name || username, langs, mode || null, connect_mode || null, enabled ? 1 : 0, br, bm, id);
     } else {
       if (!password) return res.status(400).json({ error: '新規はpassword必須' });
-      db.prepare('INSERT INTO users(username,pass,role,display_name,languages,mode,connect_mode,enabled) VALUES(?,?,?,?,?,?,?,1)').run(username, hashPw(password), role, display_name || username, langs, mode || null, connect_mode || null);
+      db.prepare('INSERT INTO users(username,pass,role,display_name,languages,mode,connect_mode,enabled,billing_required,billing_mode) VALUES(?,?,?,?,?,?,?,1,?,?)').run(username, hashPw(password), role, display_name || username, langs, mode || null, connect_mode || null, br, bm);
     }
   } catch (e) { return res.status(409).json({ error: 'そのユーザー名は既に使われています' }); }
   logEvent('user_upsert', req.user.username, { username, role }); res.json({ ok: true });
@@ -348,6 +535,24 @@ app.post('/api/admin/users/delete', requireAuth('admin'), (req, res) => {
   if (!u) return res.json({ ok: true });
   if (u.role === 'admin' && db.prepare("SELECT COUNT(*) c FROM users WHERE role='admin' AND enabled=1").get().c <= 1) return res.status(400).json({ error: '最後の管理者は削除できません' });
   db.prepare('DELETE FROM users WHERE id=?').run(u.id); logEvent('user_delete', req.user.username, { username: u.username }); res.json({ ok: true });
+});
+
+// ---- 課金設定・売上（管理者） ----
+app.get('/api/admin/billing', requireAuth('admin'), (_q, res) => res.json(getBilling()));
+app.post('/api/admin/billing', requireAuth('admin'), (req, res) => {
+  const f = req.body || {};
+  for (const k of ['base_price', 'base_minutes', 'ext_unit_minutes', 'ext_price', 'grace_sec']) {
+    if (f[k] != null && f[k] !== '') { const n = Number(f[k]); if (!isFinite(n) || n < 0) return res.status(400).json({ error: k + ' が不正です' }); setSetting('billing_' + k, Math.round(n)); }
+  }
+  if (f.currency) setSetting('billing_currency', String(f.currency).slice(0, 8));
+  logEvent('billing_update', req.user.username, f); res.json({ ok: true, ...getBilling() });
+});
+app.get('/api/admin/payments', requireAuth('admin'), (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 300, 2000);
+  const rows = db.prepare('SELECT * FROM payments ORDER BY id DESC LIMIT ?').all(limit);
+  const sum = db.prepare("SELECT COUNT(*) c, COALESCE(SUM(amount),0) total FROM payments WHERE status IN ('recorded','paid')").get();
+  const byKind = db.prepare("SELECT kind, COUNT(*) c, COALESCE(SUM(amount),0) total FROM payments WHERE status IN ('recorded','paid') GROUP BY kind").all();
+  res.json({ rows, summary: { count: sum.c, total: sum.total, byKind } });
 });
 
 app.get('/api/health', (_q, res) => res.json({ ok: true }));
@@ -361,6 +566,12 @@ setInterval(() => {
   }
   for (const s of sessions.values()) {
     if ((s.status === 'waiting' || s.status === 'assigned') && now - (s.lastSeen || 0) > USER_TIMEOUT_MS) { const i = queue.indexOf(s.id); if (i !== -1) queue.splice(i, 1); endSession(s); }
+  }
+  for (const s of sessions.values()) {
+    if (s.status === 'assigned' && s.billingRequired && s.assignedAt) {
+      const talk = (now - s.assignedAt) / 1000;
+      if (talk > (s.allowedSec || 0) + (s.billing?.grace_sec || 0)) { logEvent('billing_timeout', s.username || '', { session: s.id, allowedSec: s.allowedSec }); endSession(s); }
+    }
   }
   tryAssign();
 }, 4000);
