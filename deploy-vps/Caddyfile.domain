@@ -1,0 +1,19 @@
+# ドメイン運用版（正式証明書 / Let's Encrypt を Caddy が自動取得）
+# 使い方: このファイルを Caddyfile に上書きするだけ（ホスト名は設定済み）。
+#   cp Caddyfile.domain Caddyfile
+#
+# 前提:
+#   1) DNS(Aレコード): rtcapp.jpmind.work と rtclivekit.jpmind.work → このVPSのGIP(103.96.112.21)
+#   2) ファイアウォール: 80/tcp（ACME/HTTP-01用）と 443/tcp を開ける
+#   3) .env: LIVEKIT_URL=wss://rtclivekit.jpmind.work / PUBLIC_BASE_URL=https://rtcapp.jpmind.work
+#
+# rtclivekit.jpmind.work … LiveKit シグナリング(wss)。ブラウザは wss://rtclivekit.jpmind.work に接続。
+# rtcapp.jpmind.work     … token-server（Web/API・管理画面・Stripe Webhook /api/stripe/webhook）。
+
+rtclivekit.jpmind.work {
+    reverse_proxy 127.0.0.1:7880
+}
+
+rtcapp.jpmind.work {
+    reverse_proxy 127.0.0.1:3001
+}
