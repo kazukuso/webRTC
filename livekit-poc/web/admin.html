@@ -78,7 +78,7 @@
         <button class="ghost" id="callsReload">更新</button>
         <a id="csvLink" class="ghost" style="text-decoration:none;">CSVダウンロード</a>
       </div>
-      <table id="callsTbl"><thead><tr><th>ID</th><th>受付</th><th>顧客</th><th>地域</th><th>言語</th><th>種別</th><th>通訳者</th><th>案内人</th><th>待ち(s)</th><th>通話(s)</th><th>録画</th><th>状態</th></tr></thead><tbody></tbody></table>
+      <table id="callsTbl"><thead><tr><th>ID</th><th>受付</th><th>顧客</th><th>地域</th><th>地図</th><th>言語</th><th>種別</th><th>通訳者</th><th>案内人</th><th>待ち(s)</th><th>通話(s)</th><th>録画</th><th>状態</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -166,7 +166,8 @@ async function loadCalls(){
   const q=new URLSearchParams({lang:$('#fLang').value,status:$('#fStatus').value,limit:300});
   $('#csvLink').href='/api/admin/calls.csv?'+q; $('#csvLink').onclick=(e)=>{e.preventDefault();downloadCsv(q);};
   const rows=await (await guard(await api('/api/admin/calls?'+q))).json();
-  $('#callsTbl tbody').innerHTML=rows.map(r=>`<tr><td>${r.id}</td><td>${fmt(r.enqueued_at)}</td><td>${esc(r.name)}</td><td>${esc(r.location)||'-'}</td><td>${esc(r.language)}</td><td>${r.mode||''}</td><td>${esc(r.interpreter_name)||'-'}</td><td>${esc(r.guide_name)||'-'}</td><td>${r.wait_sec??''}</td><td>${r.talk_sec??''}</td><td>${r.recorded?'●':''}</td><td>${r.status}</td></tr>`).join('')||'<tr><td colspan=12 class=muted>履歴なし</td></tr>';
+  const mapCell=(r)=> (r.lat!=null&&r.lon!=null) ? `<a href="https://www.google.com/maps?q=${r.lat},${r.lon}" target="_blank" rel="noopener">地図</a>${r.accuracy?` <span class=muted>±${Math.round(r.accuracy)}m</span>`:''}` : '-';
+  $('#callsTbl tbody').innerHTML=rows.map(r=>`<tr><td>${r.id}</td><td>${fmt(r.enqueued_at)}</td><td>${esc(r.name)}</td><td>${esc(r.location)||'-'}</td><td>${mapCell(r)}</td><td>${esc(r.language)}</td><td>${r.mode||''}</td><td>${esc(r.interpreter_name)||'-'}</td><td>${esc(r.guide_name)||'-'}</td><td>${r.wait_sec??''}</td><td>${r.talk_sec??''}</td><td>${r.recorded?'●':''}</td><td>${r.status}</td></tr>`).join('')||'<tr><td colspan=13 class=muted>履歴なし</td></tr>';
 }
 async function downloadCsv(q){ const r=await guard(await api('/api/admin/calls.csv?'+q)); const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download='calls.csv'; a.click(); URL.revokeObjectURL(u); }
 async function loadReport(){

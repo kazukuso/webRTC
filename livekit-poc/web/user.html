@@ -107,14 +107,15 @@ function getGpsLocation(){
   return new Promise(resolve=>{
     if(!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(async pos=>{
+      const {latitude:la, longitude:lo, accuracy:ac}=pos.coords;
+      let loc=null;
       try{
-        const {latitude:la, longitude:lo}=pos.coords;
         const r=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${la}&longitude=${lo}&localityLanguage=ja`);
         const d=await r.json();
-        const loc=[d.principalSubdivision, d.city||d.locality].filter(Boolean).join(' ');
-        resolve(loc||null);
-      }catch(_){ resolve(null); }
-    }, _=>resolve(null), {enableHighAccuracy:false, timeout:8000, maximumAge:60000});
+        loc=[d.principalSubdivision, d.city||d.locality].filter(Boolean).join(' ')||null;
+      }catch(_){}
+      resolve({location:loc, lat:la, lon:lo, acc:ac});
+    }, _=>resolve(null), {enableHighAccuracy:true, timeout:8000, maximumAge:60000});
   });
 }
 
@@ -124,14 +125,15 @@ async function join(){
   const mode=document.querySelector('input[name=mode]:checked').value;
   const connectMode=document.querySelector('input[name=conn]:checked').value;
   if(!name||!passcode||!language){ $("msg").textContent="お名前・言語・端末コードを入力してください"; return; }
-  let gpsLocation=null;
+  let gps=null;
   if(mode==='B' && $("useGps") && $("useGps").checked){
     $("msg").textContent="現在地を取得中...（許可ダイアログに応答してください）";
-    gpsLocation=await getGpsLocation();
+    gps=await getGpsLocation();
   }
   $("msg").textContent="受付中...";
   const resp=await fetch("/api/user/join",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name,passcode,language,mode,connectMode,gpsLocation})});
+    body:JSON.stringify({name,passcode,language,mode,connectMode,
+      gpsLocation:gps&&gps.location, gpsLat:gps&&gps.lat, gpsLon:gps&&gps.lon, gpsAcc:gps&&gps.acc})});
   const data=await resp.json();
   if(!resp.ok){ $("msg").textContent=data.error||"受付に失敗しました"; return; }
   sessionId=data.sessionId;
