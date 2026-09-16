@@ -42,16 +42,7 @@
 </header>
 
 <!-- ログイン -->
-<div class="wrap" id="loginWrap">
-  <div class="card" id="login">
-    <h3>管理者ログイン</h3>
-    <div class="row">
-      <input id="pw" type="password" placeholder="管理者パスワード" style="flex:1" />
-      <button class="act" id="loginBtn">ログイン</button>
-    </div>
-    <div id="loginMsg" class="muted" style="margin-top:8px;"></div>
-  </div>
-</div>
+<div class="wrap hidden" id="loginWrap"><div class="card muted">確認中...</div></div>
 
 <!-- 本体 -->
 <div class="wrap hidden" id="app">
@@ -60,6 +51,7 @@
     <button data-tab="calls">通話履歴</button>
     <button data-tab="report">稼働レポート</button>
     <button data-tab="masters">マスタ管理</button>
+    <button data-tab="users">ユーザー管理</button>
     <button data-tab="events">ログ</button>
   </div>
 
@@ -114,6 +106,32 @@
     </div>
   </div>
 
+  <div id="tab-users" class="tabpage hidden">
+    <div class="card">
+      <h3>ユーザー管理</h3>
+      <table id="usrTbl"><thead><tr><th>ユーザー名</th><th>表示名</th><th>ロール</th><th>言語/モード</th><th>有効</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row" style="margin-top:12px;align-items:flex-end;flex-wrap:wrap;">
+        <div><div class="muted">ユーザー名</div><input id="uName" placeholder="username" style="width:130px"></div>
+        <div><div class="muted">表示名</div><input id="uDisp" placeholder="表示名" style="width:130px"></div>
+        <div><div class="muted">パスワード</div><input id="uPass" type="text" placeholder="新規/変更時" style="width:130px"></div>
+        <div><div class="muted">ロール</div>
+          <select id="uRole">
+            <option value="user">利用者</option><option value="interpreter">通訳者</option>
+            <option value="guide">案内人</option><option value="admin">管理者</option>
+          </select>
+        </div>
+        <div id="uLangWrap"><div class="muted">対応言語(通訳者)</div><div class="row" id="uLangs" style="gap:6px"></div></div>
+        <div id="uModeWrap"><div class="muted">モード(利用者)</div>
+          <select id="uMode"><option value="A">A</option><option value="B">B</option></select>
+          <select id="uConn"><option value="both">両者確保</option><option value="staged">段階接続</option></select>
+        </div>
+        <button class="act" id="uAdd">追加/更新</button>
+        <button class="ghost" id="uClear">クリア</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">利用者=ログイン後に言語を選ぶだけ（モードはここで設定）。通訳者=対応言語を選択。パスワードは編集時に空欄なら変更なし。</div>
+    </div>
+  </div>
+
   <div id="tab-events" class="tabpage hidden">
     <div class="card">
       <div class="row" style="margin-bottom:10px;"><button class="ghost" id="evReload">更新</button></div>
@@ -124,20 +142,14 @@
 
 <script>
 const $=(s)=>document.querySelector(s);
-let token=localStorage.getItem('adminToken')||null;
-const api=(p,opt={})=>fetch(p,{...opt,headers:{'Content-Type':'application/json','x-admin-token':token,...(opt.headers||{})}});
+let token=localStorage.getItem('authToken')||null;
+const api=(p,opt={})=>fetch(p,{...opt,headers:{'Content-Type':'application/json','x-auth-token':token,...(opt.headers||{})}});
 const fmt=(ms)=>ms?new Date(ms).toLocaleString('ja-JP',{hour12:false}):'';
 const esc=(s)=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const pill=(s)=>`<span class="pill ${s==='available'?'avail':s==='busy'?'busy':'offline'}">${s==='available'?'応対可':s==='busy'?'対応中':'離席'}</span>`;
 
-async function doLogin(){
-  const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#pw').value})});
-  const d=await r.json();
-  if(!r.ok){ $('#loginMsg').textContent=d.error||'ログイン失敗'; return; }
-  token=d.token; localStorage.setItem('adminToken',token); showApp();
-}
 function showApp(){ $('#loginWrap').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logoutBtn').classList.remove('hidden'); initLangSelectors(); switchTab('monitor'); startMonitor(); }
-function logout(){ token=null; localStorage.removeItem('adminToken'); location.reload(); }
+async function logout(){ try{await api('/api/auth/logout',{method:'POST'});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; }
 
 let monitorTimer=null;
 function switchTab(name){
@@ -148,6 +160,7 @@ function switchTab(name){
   if(name==='calls') loadCalls();
   if(name==='report') loadReport();
   if(name==='masters'){ loadLangs(); loadTerms(); }
+  if(name==='users') loadUsers();
   if(name==='events') loadEvents();
 }
 function startMonitor(){ stopMonitor(); loadOverview(); monitorTimer=setInterval(loadOverview,3000); }
@@ -199,17 +212,51 @@ async function initLangSelectors(){
   $('#tLang').innerHTML='<option value="">既定言語なし</option>'+rows.map(r=>`<option value="${r.code}">${esc(r.label)}</option>`).join('');
 }
 
+// ---- ユーザー管理 ----
+let editUserId=null;
+function roleLabel(r){ return {admin:'管理者',user:'利用者',interpreter:'通訳者',guide:'案内人'}[r]||r; }
+function uFieldToggle(){ const r=$('#uRole').value; $('#uLangWrap').style.display=r==='interpreter'?'':'none'; $('#uModeWrap').style.display=r==='user'?'':'none'; }
+async function loadUsers(){
+  // 言語チェックボックス生成
+  const langs=await (await guard(await api('/api/admin/languages'))).json();
+  $('#uLangs').innerHTML=langs.filter(l=>l.enabled).map(l=>`<label style="font-size:12px"><input type="checkbox" class="uLang" value="${l.code}"> ${esc(l.code)}</label>`).join('');
+  uFieldToggle();
+  const rows=await (await guard(await api('/api/admin/users'))).json();
+  $('#usrTbl tbody').innerHTML=rows.map(u=>{
+    const extra=u.role==='interpreter'?(u.languages||[]).join(','):(u.role==='user'?('モード'+(u.mode||'A')):'-');
+    return `<tr><td>${esc(u.username)}</td><td>${esc(u.display_name)}</td><td>${roleLabel(u.role)}</td><td>${esc(extra)}</td><td>${u.enabled?'✓':'—'}</td>
+      <td><button class=ghost onclick='editUser(${JSON.stringify(u)})'>編集</button> <button class=ghost onclick="delUser(${u.id},'${esc(u.username)}')">削除</button></td></tr>`;
+  }).join('')||'<tr><td colspan=6 class=muted>ユーザーなし</td></tr>';
+}
+window.editUser=(u)=>{ editUserId=u.id; $('#uName').value=u.username; $('#uDisp').value=u.display_name||''; $('#uPass').value=''; $('#uRole').value=u.role; uFieldToggle();
+  $('#uMode').value=u.mode||'A'; $('#uConn').value=u.connect_mode||'both';
+  document.querySelectorAll('.uLang').forEach(c=>c.checked=(u.languages||[]).includes(c.value));
+  $('#uAdd').textContent='更新'; };
+window.delUser=async(id,name)=>{ if(!confirm(name+' を削除しますか？'))return; const r=await api('/api/admin/users/delete',{method:'POST',body:JSON.stringify({id})}); const d=await r.json(); if(!r.ok){alert(d.error||'削除失敗');return;} loadUsers(); };
+function clearUserForm(){ editUserId=null; $('#uName').value='';$('#uDisp').value='';$('#uPass').value=''; $('#uRole').value='user'; uFieldToggle(); document.querySelectorAll('.uLang').forEach(c=>c.checked=false); $('#uAdd').textContent='追加/更新'; }
+async function saveUser(){
+  const username=$('#uName').value.trim(); if(!username){alert('ユーザー名は必須');return;}
+  const role=$('#uRole').value;
+  const languages=[...document.querySelectorAll('.uLang:checked')].map(c=>c.value);
+  const body={ id:editUserId||undefined, username, password:$('#uPass').value||undefined, role, display_name:$('#uDisp').value.trim()||username, languages, mode:$('#uMode').value, connect_mode:$('#uConn').value };
+  const r=await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)}); const d=await r.json();
+  if(!r.ok){ alert(d.error||'保存失敗'); return; }
+  clearUserForm(); loadUsers();
+}
+
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
-$('#loginBtn').onclick=doLogin;
-$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 $('#logoutBtn').onclick=logout;
 $('#callsReload').onclick=loadCalls;
 $('#evReload').onclick=loadEvents;
 $('#lAdd').onclick=addLang;
 $('#tAdd').onclick=addTerm;
+$('#uAdd').onclick=saveUser;
+$('#uClear').onclick=clearUserForm;
+$('#uRole').onchange=uFieldToggle;
 
-// 起動時：トークンがあれば検証
-if(token){ api('/api/admin/overview').then(r=>{ if(r.ok) showApp(); else logout(); }).catch(()=>logout()); }
+// 起動時：認証確認（管理者のみ）。未認証やロール不一致はログインページへ。
+if(!token){ location.href='/'; }
+else { api('/api/auth/me').then(r=>r.ok?r.json():Promise.reject()).then(d=>{ if(d.role==='admin') showApp(); else location.href='/'; }).catch(()=>{ localStorage.removeItem('authToken'); location.href='/'; }); }
 </script>
 </body>
 </html>

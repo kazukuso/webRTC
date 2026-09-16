@@ -3,65 +3,41 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>利用者端末 - 通訳PoC</title>
+<title>利用者 - 通訳コールセンター</title>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
 <script src="/call.js"></script>
 <style>
   body { font-family: system-ui, "Segoe UI", sans-serif; margin:0; background:#f5f6f8; color:#222; }
-  header { background:#1f4e79; color:#fff; padding:12px 18px; font-weight:bold; }
+  header { background:#1f4e79; color:#fff; padding:12px 18px; font-weight:bold; display:flex; justify-content:space-between; align-items:center; }
+  header .who{ font-size:12px; font-weight:normal; }
+  header .who a{ color:#cfe0f5; margin-left:10px; }
   .wrap { max-width:960px; margin:20px auto; padding:0 16px; }
-  .card { background:#fff; border:1px solid #e2e5ea; border-radius:10px; padding:18px; margin-bottom:16px; }
-  .term { background:#eef3f9; border:1px dashed #9db8d6; }
-  label { display:block; font-size:13px; color:#555; margin:8px 0 4px; }
-  input, select { width:100%; padding:9px 10px; border:1px solid #cfd4dc; border-radius:7px; font-size:14px; background:#fff; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; } .row>div{ flex:1; min-width:150px; }
-  button { border:0; border-radius:7px; padding:10px 16px; font-size:14px; cursor:pointer; }
-  .primary { background:#1f4e79; color:#fff; } .ghost { background:#eef1f5; color:#333; } .danger { background:#b3261e; color:#fff; }
+  .card { background:#fff; border:1px solid #e2e5ea; border-radius:10px; padding:20px; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:#555; margin:10px 0 6px; }
+  select { width:100%; padding:12px; border:1px solid #cfd4dc; border-radius:8px; font-size:16px; background:#fff; }
+  button { border:0; border-radius:8px; padding:12px 18px; font-size:15px; cursor:pointer; }
+  .primary { background:#1f4e79; color:#fff; width:100%; margin-top:16px; } .ghost { background:#eef1f5; color:#333; } .danger { background:#b3261e; color:#fff; }
   .controls { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
-  .seg { display:flex; gap:8px; } .seg label{ flex:1; margin:0; }
-  .seg input{ display:none; } .seg span{ display:block; text-align:center; padding:8px; border:1px solid #cfd4dc; border-radius:7px; font-size:13px; cursor:pointer; }
-  .seg input:checked + span{ background:#1f4e79; color:#fff; border-color:#1f4e79; }
   .videos { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
   figure { margin:0; background:#000; border-radius:10px; overflow:hidden; position:relative; aspect-ratio:4/3; }
   figure video { width:100%; height:100%; object-fit:cover; }
   figure figcaption { position:absolute; left:8px; bottom:8px; color:#fff; font-size:12px; background:rgba(0,0,0,.5); padding:2px 8px; border-radius:6px; }
-  .wait { text-align:center; padding:26px 10px; } .wait .big{ font-size:40px; font-weight:bold; color:#1f4e79; }
+  .wait { text-align:center; padding:30px 10px; } .wait .big{ font-size:44px; font-weight:bold; color:#1f4e79; }
   .hidden { display:none; } #msg,#waitMsg { font-size:13px; color:#666; margin-top:10px; min-height:18px; }
-  .b-only.hidden { display:none; }
+  .gps{ font-size:13px; color:#555; margin-top:12px; }
 </style>
 </head>
 <body>
-<header>利用者端末（通訳コールセンター PoC）</header>
+<header>利用者受付 <span class="who"><span id="who"></span><a href="#" id="logout">ログアウト</a></span></header>
 <div class="wrap">
 
-  <div class="card term" id="formCard">
-    <div style="font-size:12px;color:#5a6b80;margin-bottom:6px;">▼ 端末設定（本来は管理画面で端末ごとに設定する項目）</div>
-    <div class="row">
-      <div>
-        <label>モード</label>
-        <div class="seg">
-          <label><input type="radio" name="mode" value="A" checked><span>A：同一端末＋通訳者</span></label>
-          <label><input type="radio" name="mode" value="B"><span>B：通訳者＋案内人</span></label>
-        </div>
-      </div>
-      <div class="b-only hidden" id="connWrap">
-        <label>B接続方式</label>
-        <div class="seg">
-          <label><input type="radio" name="conn" value="both" checked><span>両者確保後</span></label>
-          <label><input type="radio" name="conn" value="staged"><span>段階接続</span></label>
-        </div>
-      </div>
+  <div class="card" id="formCard">
+    <label>ご希望の言語を選んでください / Select language</label>
+    <select id="language"></select>
+    <div class="gps hidden" id="gpsWrap">
+      <label style="margin:0;"><input type="checkbox" id="useGps"> 現在地を送信する（任意・市区町村の記録に使用。ブラウザの許可が必要）</label>
     </div>
-    <div class="b-only hidden" id="gpsWrap" style="margin-top:8px;">
-      <label style="font-size:13px;color:#555;"><input type="checkbox" id="useGps"> 現在地を送信する（任意・市区町村の記録に使用。ブラウザの許可が必要）</label>
-    </div>
-    <hr style="border:none;border-top:1px solid #d5deea;margin:14px 0;">
-    <div class="row">
-      <div><label>お名前</label><input id="name" placeholder="例: 来訪者A" /></div>
-      <div><label>必要言語</label><select id="language"></select></div>
-      <div><label>端末コード</label><input id="passcode" placeholder="例: 1234" /></div>
-    </div>
-    <div class="controls"><button class="primary" id="joinBtn">受付する</button></div>
+    <button class="primary" id="joinBtn">通訳を呼ぶ</button>
     <div id="msg"></div>
   </div>
 
@@ -90,61 +66,50 @@
 </div>
 <script>
 const $ = (id)=>document.getElementById(id);
-let sessionId=null, polling=null, connected=false, hb=null;
+const token=localStorage.getItem('authToken');
+let me=null, sessionId=null, polling=null, connected=false, hb=null;
 
-// 言語マスタから選択肢生成
-fetch('/api/languages').then(r=>r.json()).then(list=>{
-  $("language").innerHTML = list.map(l=>`<option value="${l.code}">${l.label}</option>`).join('');
-});
-// モードでB専用項目の表示切替
-const isB=()=>document.querySelector('input[name=mode]:checked').value==='B';
-document.querySelectorAll('input[name=mode]').forEach(el=>el.onchange=()=>{
-  document.querySelectorAll('.b-only').forEach(e=>e.classList.toggle('hidden', !isB()));
-});
+// 認証チェック＋アカウント情報取得
+(async ()=>{
+  if(!token){ location.href='/'; return; }
+  const r=await fetch('/api/auth/me',{headers:{'x-auth-token':token}});
+  if(!r.ok){ localStorage.removeItem('authToken'); location.href='/'; return; }
+  me=await r.json();
+  if(me.role!=='user'){ location.href='/'; return; }
+  $("who").textContent=me.displayName+'（'+(me.mode==='B'?'パターンB':'パターンA')+'）';
+  if(me.mode==='B') $("gpsWrap").classList.remove('hidden');
+  const list=await (await fetch('/api/languages')).json();
+  $("language").innerHTML=list.map(l=>`<option value="${l.code}">${l.label}</option>`).join('');
+})();
 
-// GPS取得→逆ジオコーディング（無料/キー不要のBigDataCloud, 日本語）。失敗時はnull。
 function getGpsLocation(){
   return new Promise(resolve=>{
     if(!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(async pos=>{
-      const {latitude:la, longitude:lo, accuracy:ac}=pos.coords;
-      let loc=null;
-      try{
-        const r=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${la}&longitude=${lo}&localityLanguage=ja`);
-        const d=await r.json();
-        loc=[d.principalSubdivision, d.city||d.locality].filter(Boolean).join(' ')||null;
-      }catch(_){}
+      const {latitude:la, longitude:lo, accuracy:ac}=pos.coords; let loc=null;
+      try{ const d=await (await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${la}&longitude=${lo}&localityLanguage=ja`)).json();
+        loc=[d.principalSubdivision, d.city||d.locality].filter(Boolean).join(' ')||null; }catch(_){}
       resolve({location:loc, lat:la, lon:lo, acc:ac});
     }, _=>resolve(null), {enableHighAccuracy:true, timeout:8000, maximumAge:60000});
   });
 }
 
 async function join(){
-  const name=$("name").value.trim(), passcode=$("passcode").value.trim();
-  const language=$("language").value;
-  const mode=document.querySelector('input[name=mode]:checked').value;
-  const connectMode=document.querySelector('input[name=conn]:checked').value;
-  if(!name||!passcode||!language){ $("msg").textContent="お名前・言語・端末コードを入力してください"; return; }
+  const language=$("language").value; if(!language){ $("msg").textContent="言語を選んでください"; return; }
   let gps=null;
-  if(mode==='B' && $("useGps") && $("useGps").checked){
-    $("msg").textContent="現在地を取得中...（許可ダイアログに応答してください）";
-    gps=await getGpsLocation();
-  }
+  if(me.mode==='B' && $("useGps").checked){ $("msg").textContent="現在地を取得中...（許可ダイアログに応答してください）"; gps=await getGpsLocation(); }
   $("msg").textContent="受付中...";
-  const resp=await fetch("/api/user/join",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name,passcode,language,mode,connectMode,
-      gpsLocation:gps&&gps.location, gpsLat:gps&&gps.lat, gpsLon:gps&&gps.lon, gpsAcc:gps&&gps.acc})});
+  const resp=await fetch("/api/user/join",{method:"POST",headers:{"Content-Type":"application/json","x-auth-token":token},
+    body:JSON.stringify({language, gpsLocation:gps&&gps.location, gpsLat:gps&&gps.lat, gpsLon:gps&&gps.lon, gpsAcc:gps&&gps.acc})});
   const data=await resp.json();
   if(!resp.ok){ $("msg").textContent=data.error||"受付に失敗しました"; return; }
   sessionId=data.sessionId;
   $("formCard").classList.add("hidden"); $("waitCard").classList.remove("hidden");
   polling=setInterval(poll,1500); poll();
 }
-
 async function poll(){
   if(!sessionId||connected) return;
-  const r=await fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId));
-  const s=await r.json();
+  const s=await (await fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId))).json();
   if(s.status==="waiting"){ $("pos").textContent=s.position; $("waitLang").textContent=s.language; }
   else if(s.status==="assigned"){
     connected=true; clearInterval(polling);
@@ -152,21 +117,19 @@ async function poll(){
     if(s.guidePending) $("waitMsg").textContent="通訳者と接続しました。案内人が参加します…";
     await CallUI.connect(s.url, s.token, {localVideo:$("localVideo"), remoteContainer:$("remotes")});
     if(s.guidePending) setTimeout(()=>{ $("waitMsg").textContent=""; }, 8000);
-    // 通話中も低頻度で生存通知（サーバの切断検出のため）。終了検知でリロード。
-    hb=setInterval(()=>{
-      fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId)).then(r=>r.json())
-        .then(x=>{ if(x&&x.status!=='assigned'&&x.status!=='waiting'){ clearInterval(hb); CallUI.disconnect(); } })
-        .catch(()=>{});
-    }, 5000);
+    hb=setInterval(()=>{ fetch("/api/user/status?sessionId="+encodeURIComponent(sessionId)).then(r=>r.json())
+      .then(x=>{ if(x&&x.status!=='assigned'&&x.status!=='waiting'){ clearInterval(hb); CallUI.disconnect(); } }).catch(()=>{}); }, 5000);
   }
 }
-function leave(){ clearInterval(polling); clearInterval(hb); CallUI.disconnect(); location.reload(); }
+function backToForm(){ clearInterval(polling); clearInterval(hb); CallUI.disconnect(); sessionId=null; connected=false;
+  $("callCard").classList.add("hidden"); $("waitCard").classList.add("hidden"); $("formCard").classList.remove("hidden"); $("msg").textContent=""; }
 
 $("joinBtn").onclick=join;
-$("cancelBtn").onclick=leave;
-$("leaveBtn").onclick=leave;
+$("cancelBtn").onclick=backToForm;
+$("leaveBtn").onclick=backToForm;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
+$("logout").onclick=async(e)=>{ e.preventDefault(); try{await fetch('/api/auth/logout',{method:'POST',headers:{'x-auth-token':token}});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; };
 </script>
 </body>
 </html>

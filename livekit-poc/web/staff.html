@@ -3,22 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>スタッフ - 通訳PoC</title>
+<title>スタッフ - 通訳コールセンター</title>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
 <script src="/call.js"></script>
 <style>
   body { font-family: system-ui, "Segoe UI", sans-serif; margin:0; background:#f5f6f8; color:#222; }
-  header { background:#0d3b66; color:#fff; padding:12px 18px; font-weight:bold; }
+  header { background:#0d3b66; color:#fff; padding:12px 18px; font-weight:bold; display:flex; justify-content:space-between; align-items:center; }
+  header .who{ font-size:12px; font-weight:normal; } header .who a{ color:#cfe0f5; margin-left:10px; }
   .wrap { max-width:960px; margin:20px auto; padding:0 16px; }
   .card { background:#fff; border:1px solid #e2e5ea; border-radius:10px; padding:18px; margin-bottom:16px; }
-  label { display:block; font-size:13px; color:#555; margin:8px 0 4px; }
-  input { width:100%; padding:9px 10px; border:1px solid #cfd4dc; border-radius:7px; font-size:14px; }
   button { border:0; border-radius:7px; padding:10px 16px; font-size:14px; cursor:pointer; }
   .primary { background:#0d3b66; color:#fff; } .ghost { background:#eef1f5; color:#333; } .danger { background:#b3261e; color:#fff; } .ok { background:#1a7f37; color:#fff; }
   .controls { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; align-items:center; }
-  .langs { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
-  .langs label { display:flex; align-items:center; gap:6px; font-size:13px; background:#f2f5f9; padding:6px 10px; border-radius:7px; margin:0; cursor:pointer; }
-  .langs input{ width:auto; }
   .status { display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
   .pill { font-size:13px; padding:4px 12px; border-radius:20px; background:#eef1f5; }
   .pill.avail { background:#dff5e3; color:#1a7f37; } .pill.busy { background:#fde7e7; color:#b3261e; }
@@ -26,26 +22,14 @@
   figure { margin:0; background:#000; border-radius:10px; overflow:hidden; position:relative; aspect-ratio:4/3; }
   figure video { width:100%; height:100%; object-fit:cover; }
   figure figcaption { position:absolute; left:8px; bottom:8px; color:#fff; font-size:12px; background:rgba(0,0,0,.5); padding:2px 8px; border-radius:6px; }
-  .hidden { display:none; } #msg,#msg2,#recMsg { font-size:13px; color:#666; margin-top:8px; }
+  .hidden { display:none; } #msg2,#recMsg { font-size:13px; color:#666; margin-top:8px; }
 </style>
 </head>
 <body>
-<header id="hdr">スタッフ コンソール（通訳PoC）</header>
+<header id="hdr">スタッフ コンソール <span class="who"><span id="who"></span><a href="#" id="logout">ログアウト</a></span></header>
 <div class="wrap">
 
-  <div class="card" id="loginCard">
-    <div id="roleBadge" style="font-weight:bold;color:#0d3b66;margin-bottom:6px;"></div>
-    <label>お名前</label>
-    <input id="name" placeholder="例: 通訳1 / 案内1" />
-    <div id="langBox">
-      <label>対応言語（複数選択可）</label>
-      <div class="langs" id="langs"></div>
-    </div>
-    <div class="controls"><button class="primary" id="loginBtn">ログイン</button></div>
-    <div id="msg"></div>
-  </div>
-
-  <div class="card hidden" id="consoleCard">
+  <div class="card" id="consoleCard">
     <div class="status">
       <div>状態: <span class="pill" id="statePill">-</span></div>
       <div id="waitInfo" style="font-size:13px;color:#444;"></div>
@@ -73,59 +57,44 @@
 </div>
 <script>
 const $ = (id)=>document.getElementById(id);
-const params = new URLSearchParams(location.search);
-const role = params.get('role')==='guide' ? 'guide' : 'interpreter';
-let staffId=null, polling=null, inCall=false, recording=false;
+const token=localStorage.getItem('authToken');
+const AH={'Content-Type':'application/json','x-auth-token':token};
+let me=null, role=null, polling=null, inCall=false, recording=false;
 
-$("roleBadge").textContent = role==='guide' ? '案内人としてログイン' : '通訳者としてログイン';
-$("hdr").textContent = (role==='guide'?'案内人':'通訳者') + ' コンソール（通訳PoC）';
-if(role==='guide'){ $("langBox").classList.add('hidden'); }
-else {
-  fetch('/api/languages').then(r=>r.json()).then(list=>{
-    $("langs").innerHTML = list.map(l=>`<label><input type="checkbox" value="${l.code}">${l.label}</label>`).join('');
-  });
-}
-
-async function login(){
-  const name=$("name").value.trim();
-  if(!name){ $("msg").textContent="お名前を入力してください"; return; }
-  const languages = role==='interpreter'
-    ? [...document.querySelectorAll('#langs input:checked')].map(el=>el.value) : undefined;
-  if(role==='interpreter' && languages.length===0){ $("msg").textContent="対応言語を1つ以上選択してください"; return; }
-  const resp=await fetch("/api/staff/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,role,languages})});
-  const data=await resp.json();
-  if(!resp.ok){ $("msg").textContent=data.error||"ログイン失敗"; return; }
-  staffId=data.staffId;
-  $("loginCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
-  setState("available");
+(async ()=>{
+  if(!token){ location.href='/'; return; }
+  const r=await fetch('/api/auth/me',{headers:{'x-auth-token':token}});
+  if(!r.ok){ localStorage.removeItem('authToken'); location.href='/'; return; }
+  me=await r.json(); role=me.role;
+  if(role!=='interpreter' && role!=='guide'){ location.href='/'; return; }
+  $("hdr").firstChild.textContent=(role==='guide'?'案内人':'通訳者')+' コンソール ';
+  $("who").textContent=me.displayName+(role==='interpreter'?'（'+(me.languages||[]).join(',')+'）':'');
+  setState("available"); setStatus("available");
   polling=setInterval(poll,1500); poll();
-}
+})();
+
 async function setStatus(status){
-  const r=await fetch("/api/staff/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({staffId,status})});
-  const d=await r.json(); setState(d.status);
+  const d=await (await fetch("/api/staff/status",{method:"POST",headers:AH,body:JSON.stringify({status})})).json();
+  setState(d.status);
 }
-function setState(s){
-  const p=$("statePill"); p.textContent = s==="available"?"応対可":(s==="busy"?"対応中":"離席");
-  p.className="pill"+(s==="available"?" avail":(s==="busy"?" busy":""));
-}
+function setState(s){ const p=$("statePill"); p.textContent=s==="available"?"応対可":(s==="busy"?"対応中":"離席"); p.className="pill"+(s==="available"?" avail":(s==="busy"?" busy":"")); }
+
 async function poll(){
-  if(!staffId) return;
-  let d;
-  try{ d=await (await fetch("/api/staff/poll?staffId="+encodeURIComponent(staffId))).json(); }catch(_){ return; }
-  if(inCall) return; // 通話中は上のfetchで生存通知だけ行い、再着信処理はしない
-  // 待機情報
-  if(role==='guide') $("waitInfo").textContent = "案内人待ちのB通話: "+(d.guideNeeded??0)+" 件";
-  else if(d.waitingByLang){ $("waitInfo").textContent = "待機中: "+Object.entries(d.waitingByLang).map(([k,v])=>`${k}:${v}`).join(' / '); }
+  if(!token) return;
+  let d; try{ d=await (await fetch("/api/staff/poll",{headers:{'x-auth-token':token}})).json(); }catch(_){ return; }
+  if(inCall) return; // 通話中は生存通知のみ
+  if(role==='guide') $("waitInfo").textContent="案内人待ちのB通話: "+(d.guideNeeded??0)+" 件";
+  else if(d.waitingByLang) $("waitInfo").textContent="待機中: "+Object.entries(d.waitingByLang).map(([k,v])=>`${k}:${v}`).join(' / ');
   if(d.assigned){
     inCall=true; setState("busy");
     $("consoleCard").classList.add("hidden"); $("callCard").classList.remove("hidden");
-    $("callInfo").textContent = `対応中: ${d.customer||'-'}（${d.language||''} / パターン${d.mode||''}）`;
+    $("callInfo").textContent=`対応中: ${d.customer||'-'}（${d.language||''} / パターン${d.mode||''}）`;
     if(role==='interpreter') $("recBtn").classList.remove('hidden');
     await CallUI.connect(d.url,d.token,{localVideo:$("localVideo"), remoteContainer:$("remotes")});
   } else setState(d.status);
 }
 async function hangup(){
-  await fetch("/api/staff/hangup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({staffId})});
+  await fetch("/api/staff/hangup",{method:"POST",headers:AH,body:'{}'});
   CallUI.disconnect(); inCall=false; recording=false;
   $("recBtn").textContent="● 録画開始"; $("recBtn").style.color=""; $("recMsg").textContent="";
   $("callCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
@@ -134,22 +103,19 @@ async function hangup(){
 async function toggleRecord(){
   const p = recording ? "/api/staff/record/stop" : "/api/staff/record/start";
   $("recMsg").textContent = recording?"録画停止中...":"録画開始中...";
-  const r=await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({staffId})});
-  const d=await r.json();
+  const r=await fetch(p,{method:"POST",headers:AH,body:'{}'}); const d=await r.json();
   if(!r.ok){ $("recMsg").textContent="エラー: "+(d.error||""); return; }
-  recording=!recording;
-  $("recBtn").textContent = recording?"■ 録画停止":"● 録画開始";
-  $("recBtn").style.color = recording?"#b3261e":"";
-  $("recMsg").textContent = recording?("録画中: "+d.filepath):("保存しました: "+(d.filepath||""));
+  recording=!recording; $("recBtn").textContent=recording?"■ 録画停止":"● 録画開始"; $("recBtn").style.color=recording?"#b3261e":"";
+  $("recMsg").textContent=recording?("録画中: "+d.filepath):("保存しました: "+(d.filepath||""));
 }
 
-$("loginBtn").onclick=login;
 $("availBtn").onclick=()=>setStatus("available");
 $("offBtn").onclick=()=>setStatus("offline");
 $("hangupBtn").onclick=hangup;
 $("recBtn").onclick=toggleRecord;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
+$("logout").onclick=async(e)=>{ e.preventDefault(); try{await fetch('/api/staff/status',{method:'POST',headers:AH,body:JSON.stringify({status:'offline'})});await fetch('/api/auth/logout',{method:'POST',headers:{'x-auth-token':token}});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; };
 </script>
 </body>
 </html>
