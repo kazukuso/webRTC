@@ -6,6 +6,7 @@
 <title>スタッフ - 通訳コールセンター</title>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
 <script src="/call.js"></script>
+<script src="/lkbg/track-processors.min.js"></script>
 <style>
   body { font-family: system-ui, "Segoe UI", sans-serif; margin:0; background:#f5f6f8; color:#222; }
   header { background:#0d3b66; color:#fff; padding:12px 18px; font-weight:bold; display:flex; justify-content:space-between; align-items:center; }
@@ -49,6 +50,13 @@
       <button class="ghost" id="micBtn">マイク オフ</button>
       <button class="ghost" id="camBtn">カメラ オフ</button>
       <button class="ghost hidden" id="recBtn">● 録画開始</button>
+      <span id="bgCtrl" class="hidden" style="display:inline-flex;gap:6px;align-items:center;">
+        <span style="font-size:12px;color:#555;">背景:</span>
+        <button class="ghost" id="bgOff">なし</button>
+        <button class="ghost" id="bgBlur">ぼかし</button>
+        <button class="ghost" id="bgImg1">背景1</button>
+        <button class="ghost" id="bgImg2">背景2</button>
+      </span>
       <button class="danger" id="hangupBtn">通話終了</button>
     </div>
     <div id="recMsg"></div>
@@ -91,11 +99,13 @@ async function poll(){
     $("callInfo").textContent=`対応中: ${d.customer||'-'}（${d.language||''} / パターン${d.mode||''}）`;
     if(role==='interpreter') $("recBtn").classList.remove('hidden');
     await CallUI.connect(d.url,d.token,{localVideo:$("localVideo"), remoteContainer:$("remotes")});
+    if(CallUI.bgSupported && CallUI.bgSupported()) $("bgCtrl").classList.remove("hidden");
   } else setState(d.status);
 }
 async function hangup(){
   await fetch("/api/staff/hangup",{method:"POST",headers:AH,body:'{}'});
   CallUI.disconnect(); inCall=false; recording=false;
+  $("bgCtrl").classList.add("hidden");
   $("recBtn").textContent="● 録画開始"; $("recBtn").style.color=""; $("recMsg").textContent="";
   $("callCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
   setState("available"); poll();
@@ -115,6 +125,11 @@ $("hangupBtn").onclick=hangup;
 $("recBtn").onclick=toggleRecord;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
+const applyBg=async(m,u)=>{ try{ await CallUI.setBackground(m,u); }catch(e){ alert("背景処理を適用できませんでした（端末性能により未対応の場合あり）"); } };
+$("bgOff").onclick=()=>applyBg("off");
+$("bgBlur").onclick=()=>applyBg("blur");
+$("bgImg1").onclick=()=>applyBg("image","/lkbg/bg1.jpg");
+$("bgImg2").onclick=()=>applyBg("image","/lkbg/bg2.jpg");
 $("logout").onclick=async(e)=>{ e.preventDefault(); try{await fetch('/api/staff/status',{method:'POST',headers:AH,body:JSON.stringify({status:'offline'})});await fetch('/api/auth/logout',{method:'POST',headers:{'x-auth-token':token}});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; };
 </script>
 </body>

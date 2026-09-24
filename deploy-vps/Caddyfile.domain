@@ -9,11 +9,15 @@
 #
 # rtclivekit.jpmind.work … LiveKit シグナリング(wss)。ブラウザは wss://rtclivekit.jpmind.work に接続。
 # rtcapp.jpmind.work     … token-server（Web/API・管理画面・Stripe Webhook /api/stripe/webhook）。
+#
+# X-Robots-Tag: noindex … 検索エンジンにインデックスさせない（全ページ・全パスに適用）。
 
 rtclivekit.jpmind.work {
+    header X-Robots-Tag "noindex, nofollow, noarchive"
     reverse_proxy 127.0.0.1:7880
 }
 
 rtcapp.jpmind.work {
+    header X-Robots-Tag "noindex, nofollow, noarchive"
     reverse_proxy 127.0.0.1:3001
 }

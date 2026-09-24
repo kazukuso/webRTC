@@ -2,11 +2,15 @@
 # build context = livekit-poc（token-server と web を同梱）
 # better-sqlite3 のためネイティブビルド依存を入れる（prebuiltが使えれば未使用でもOK）。
 FROM node:20-slim
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ curl \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY web ./web
+# 背景処理モデル（セルフィーセグメンター）をビルド時に取得し自ドメインで配信（失敗しても継続）
+RUN mkdir -p web/lkbg && (curl -fsSL -o web/lkbg/selfie_segmenter.tflite \
+      https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite \
+      && echo "[build] bg model fetched" || echo "[build] WARN: bg model fetch failed (背景機能は無効になります)")
 COPY token-server ./token-server
 
 WORKDIR /app/token-server
