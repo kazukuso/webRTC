@@ -150,10 +150,11 @@ async function poll(){
       }).catch(()=>{}); }, 5000);
   }
 }
-function backToForm(){ clearInterval(polling); clearInterval(hb); clearInterval(billTick); CallUI.disconnect(); sessionId=null; connected=false; bill=null;
+function backToForm(){ if(sessionId){ try{ fetch("/api/user/leave",{method:"POST",keepalive:true,headers:{"Content-Type":"application/json","x-auth-token":token},body:JSON.stringify({sessionId})}); }catch(_){} } clearInterval(polling); clearInterval(hb); clearInterval(billTick); CallUI.disconnect(); sessionId=null; connected=false; bill=null;
   $("billBar").classList.add("hidden"); $("switchCamBtn").classList.add("hidden"); $("bgCtrl").classList.add("hidden");
   $("callCard").classList.add("hidden"); $("waitCard").classList.add("hidden"); $("formCard").classList.remove("hidden"); $("msg").textContent=""; }
 
+function toast(msg){ const el=$("waitMsg"); if(!el) return; el.textContent=msg; clearTimeout(window.__toastT); window.__toastT=setTimeout(()=>{ if($("waitMsg")) $("waitMsg").textContent=""; },4000); }
 function setBilling(b){ bill=(b&&b.required)?b:null; if(bill) $("extPrice").textContent=bill.extPrice; updateBillUI(); }
 function updateBillUI(){
   if(!bill){ $("billBar").classList.add("hidden"); return; }
@@ -164,13 +165,13 @@ function updateBillUI(){
 }
 function startBillTick(){ clearInterval(billTick); billTick=setInterval(()=>{ if(bill){ bill.remainingSec=Math.max(0,(bill.remainingSec|0)-1); updateBillUI(); } },1000); }
 async function extend(){
-  if(!sessionId) return; $("extendBtn").disabled=true;
+  if(!sessionId || !bill) return; $("extendBtn").disabled=true;
   try{
     const r=await fetch("/api/user/extend",{method:"POST",headers:{"Content-Type":"application/json","x-auth-token":token},body:JSON.stringify({sessionId})});
     const d=await r.json();
-    if(!r.ok){ alert(d.error||"延長できませんでした"); return; }
+    if(!r.ok){ toast(d.error||"延長できませんでした"); return; }
     if(bill){ bill.remainingSec=d.remainingSec; bill.chargeTotal=d.chargeTotal; bill.extPrice=d.extPrice; bill.extUnitMin=d.extUnitMin; updateBillUI(); }
-  }catch(_){ alert("延長に失敗しました"); }
+  }catch(_){ toast("延長に失敗しました"); }
   finally{ $("extendBtn").disabled=false; }
 }
 function endCall(msg){ clearInterval(hb); clearInterval(billTick); CallUI.disconnect(); backToForm(); if(msg) $("msg").textContent=msg; }
@@ -202,12 +203,13 @@ $("extendBtn").onclick=extend;
 $("cardBtn").onclick=registerCard;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
-$("switchCamBtn").onclick=async()=>{ try{ await CallUI.switchCamera($("localVideo")); }catch(e){ alert("カメラ切替に失敗しました（対応していない端末の可能性）"); } };
-const applyBg=async(m,u)=>{ try{ await CallUI.setBackground(m,u); }catch(e){ alert("背景処理を適用できませんでした（端末性能により未対応の場合があります）"); } };
+$("switchCamBtn").onclick=async()=>{ try{ await CallUI.switchCamera($("localVideo")); }catch(e){ toast("カメラ切替に失敗しました（対応端末をご確認ください）"); } };
+const applyBg=async(m,u)=>{ try{ await CallUI.setBackground(m,u); }catch(e){ toast("背景処理を適用できませんでした（端末により未対応の場合あり）"); } };
 $("bgOff").onclick=()=>applyBg("off");
 $("bgBlur").onclick=()=>applyBg("blur");
 $("bgImg1").onclick=()=>applyBg("image","/lkbg/bg1.jpg");
 $("bgImg2").onclick=()=>applyBg("image","/lkbg/bg2.jpg");
+window.addEventListener("pagehide",()=>{ if(sessionId){ try{ fetch("/api/user/leave",{method:"POST",keepalive:true,headers:{"Content-Type":"application/json","x-auth-token":token},body:JSON.stringify({sessionId})}); }catch(_){} } });
 $("logout").onclick=async(e)=>{ e.preventDefault(); try{await fetch('/api/auth/logout',{method:'POST',headers:{'x-auth-token':token}});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; };
 </script>
 </body>

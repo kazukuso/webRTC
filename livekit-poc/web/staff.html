@@ -91,7 +91,15 @@ function setState(s){ const p=$("statePill"); p.textContent=s==="available"?"応
 async function poll(){
   if(!token) return;
   let d; try{ d=await (await fetch("/api/staff/poll",{headers:{'x-auth-token':token}})).json(); }catch(_){ return; }
-  if(inCall) return; // 通話中は生存通知のみ
+  if(inCall){
+    if(d.assigned) return; // 通話継続中は生存通知のみ
+    // 相手が退出/セッション終了 → コンソール(待機)へ自動復帰
+    CallUI.disconnect(); inCall=false; recording=false;
+    $("bgCtrl").classList.add("hidden");
+    $("recBtn").textContent="● 録画開始"; $("recBtn").style.color=""; $("recBtn").classList.add("hidden"); $("recMsg").textContent="";
+    $("callCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
+    setState("available");
+  }
   if(role==='guide') $("waitInfo").textContent="案内人待ちのB通話: "+(d.guideNeeded??0)+" 件";
   else if(d.waitingByLang) $("waitInfo").textContent="待機中: "+Object.entries(d.waitingByLang).map(([k,v])=>`${k}:${v}`).join(' / ');
   if(d.assigned){
@@ -126,7 +134,8 @@ $("hangupBtn").onclick=hangup;
 $("recBtn").onclick=toggleRecord;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
-const applyBg=async(m,u)=>{ try{ await CallUI.setBackground(m,u); }catch(e){ alert("背景処理を適用できませんでした（端末性能により未対応の場合あり）"); } };
+function toast(msg){ const el=$("recMsg"); if(el){ el.textContent=msg; clearTimeout(window.__t); window.__t=setTimeout(()=>{ if($("recMsg")) $("recMsg").textContent=""; },4000);} }
+const applyBg=async(m,u)=>{ try{ await CallUI.setBackground(m,u); }catch(e){ toast("背景処理を適用できませんでした（端末により未対応の場合あり）"); } };
 $("bgOff").onclick=()=>applyBg("off");
 $("bgBlur").onclick=()=>applyBg("blur");
 $("bgImg1").onclick=()=>applyBg("image","/lkbg/bg1.jpg");

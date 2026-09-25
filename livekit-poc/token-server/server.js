@@ -387,6 +387,17 @@ app.post('/api/user/extend', requireAuth('user'), async (req, res) => {
   res.json({ ok: true, extCount: s.extCount, allowedSec: s.allowedSec, remainingSec: Math.max(0, s.allowedSec - talk), chargeTotal: s.chargeTotal, extUnitMin: b.ext_unit_minutes, extPrice: b.ext_price });
 });
 
+// 利用者の退出（即時セッション終了＝スタッフを速やかに解放）
+app.post('/api/user/leave', requireAuth('user'), (req, res) => {
+  const s = sessions.get(req.body?.sessionId);
+  if (s && s.userId === req.user.id && s.status !== 'ended') {
+    const i = queue.indexOf(s.id); if (i !== -1) queue.splice(i, 1);
+    logEvent('user_leave', s.username || '', { session: s.id });
+    endSession(s); tryAssign();
+  }
+  res.json({ ok: true });
+});
+
 // カード登録状態
 app.get('/api/user/card', requireAuth('user'), (req, res) => {
   const u = db.prepare('SELECT stripe_customer_id,stripe_pm_id,card_brand,card_last4 FROM users WHERE id=?').get(req.user.id) || {};
