@@ -2,6 +2,7 @@
 window.CallUI = (function () {
   let room = null;
   let facing = 'user';
+  let remoteEl = null;
   const LK = () => window.LivekitClient;
 
   function roleLabel(participant) {
@@ -28,6 +29,8 @@ window.CallUI = (function () {
   }
 
   async function connect(url, token, els) {
+    remoteEl = els.remoteContainer;
+    if (remoteEl) remoteEl.innerHTML = '';
     room = new (LK().Room)({ adaptiveStream: true, dynacast: true });
     room.on(LK().RoomEvent.TrackSubscribed, (track, _pub, participant) => {
       if (track.kind === 'video') track.attach(ensureTile(els.remoteContainer, participant));
@@ -89,7 +92,7 @@ window.CallUI = (function () {
     else return;
     await track.setProcessor(proc); bgMode = mode;
   }
-  function disconnect() { if (room) room.disconnect(); room = null; }
+  function disconnect() { if (room) room.disconnect(); room = null; if (remoteEl) { remoteEl.innerHTML = ''; } }
 
   return { connect, toggleMic, toggleCam, switchCamera, setBackground, bgSupported, disconnect };
 })();
