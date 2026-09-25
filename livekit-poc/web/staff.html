@@ -27,7 +27,7 @@
 </style>
 </head>
 <body>
-<header id="hdr">スタッフ コンソール <span class="who"><span id="who"></span><a href="#" id="logout">ログアウト</a></span></header>
+<header id="hdr">スタッフ コンソール <span class="who"><span id="who"></span><a href="#" id="helpLink" target="_blank">ヘルプ</a> <a href="#" id="logout">ログアウト</a></span></header>
 <div class="wrap">
 
   <div class="card" id="consoleCard">
@@ -76,6 +76,7 @@ let me=null, role=null, polling=null, inCall=false, recording=false;
   me=await r.json(); role=me.role;
   if(role!=='interpreter' && role!=='guide'){ location.href='/'; return; }
   $("hdr").firstChild.textContent=(role==='guide'?'案内人':'通訳者')+' コンソール ';
+  $("helpLink").href = (role==='guide'?'/help/guide.html':'/help/interpreter.html');
   $("who").textContent=me.displayName+(role==='interpreter'?'（'+(me.languages||[]).join(',')+'）':'');
   setState("available"); setStatus("available");
   polling=setInterval(poll,1500); poll();

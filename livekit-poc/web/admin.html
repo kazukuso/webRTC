@@ -38,6 +38,7 @@
 <body>
 <header>
   <span>通訳コールセンター 管理コンソール</span>
+  <a class="logout hidden" id="helpLink" href="/help/admin.html" target="_blank" style="text-decoration:none;margin-right:8px;">ヘルプ</a>
   <button class="logout hidden" id="logoutBtn">ログアウト</button>
 </header>
 
@@ -173,7 +174,7 @@ const fmt=(ms)=>ms?new Date(ms).toLocaleString('ja-JP',{hour12:false}):'';
 const esc=(s)=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const pill=(s)=>`<span class="pill ${s==='available'?'avail':s==='busy'?'busy':'offline'}">${s==='available'?'応対可':s==='busy'?'対応中':'離席'}</span>`;
 
-function showApp(){ $('#loginWrap').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logoutBtn').classList.remove('hidden'); initLangSelectors(); switchTab('monitor'); startMonitor(); }
+function showApp(){ $('#loginWrap').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logoutBtn').classList.remove('hidden'); $('#helpLink').classList.remove('hidden'); initLangSelectors(); switchTab('monitor'); startMonitor(); }
 async function logout(){ try{await api('/api/auth/logout',{method:'POST'});}catch(_){} localStorage.removeItem('authToken'); location.href='/'; }
 
 let monitorTimer=null;

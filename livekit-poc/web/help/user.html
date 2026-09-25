@@ -1,0 +1,96 @@
+<!DOCTYPE html><html lang="ja"><head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>利用者マニュアル - マニュアル</title>
+<style>
+  :root{--accent:#1f4e79;}
+  *{box-sizing:border-box;}
+  body{font-family:system-ui,"Segoe UI",sans-serif;margin:0;background:#f5f6f8;color:#1a2330;line-height:1.7;}
+  header{background:var(--accent);color:#fff;padding:12px 18px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;}
+  header .who{font-size:12px;font-weight:normal;}
+  header .who a{color:#cfe0f5;margin-left:12px;text-decoration:none;}
+  .wrap{max-width:820px;margin:20px auto;padding:0 16px 60px;}
+  .lead{color:#444;font-size:14px;margin:6px 0 18px;}
+  h2{color:var(--accent);font-size:17px;margin:26px 0 8px;border-bottom:2px solid #e2e5ea;padding-bottom:4px;}
+  h3{color:#26456b;font-size:14px;margin:16px 0 6px;}
+  p{margin:6px 0;font-size:14px;}
+  ol,ul{margin:6px 0 6px 4px;padding-left:22px;font-size:14px;}
+  li{margin:4px 0;}
+  .card{background:#fff;border:1px solid #e2e5ea;border-radius:10px;padding:14px 18px;margin:12px 0;}
+  .note{background:#eef4fb;border:1px solid #b9d2ee;border-radius:8px;padding:10px 14px;font-size:13px;margin:12px 0;}
+  .warn{background:#fff8e6;border:1px solid #f0d98a;border-radius:8px;padding:10px 14px;font-size:13px;margin:12px 0;}
+  .btn{display:inline-block;background:#eef1f5;border-radius:6px;padding:2px 8px;font-size:13px;color:#333;border:1px solid #d7dde6;}
+  .back{display:inline-block;margin:0 0 6px;color:var(--accent);text-decoration:none;font-size:13px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0;}
+  th,td{border:1px solid #e3e7ee;padding:6px 8px;text-align:left;} th{background:#f2f5f9;}
+  .muted{color:#66707d;font-size:12px;}
+</style></head><body>
+<header><span>利用者マニュアル</span><span class="who"><span id="who"></span><a href="/user.html">受付画面に戻る</a></span></header>
+<div class="wrap">
+<a class="back" href="/user.html">&larr; 受付画面に戻る</a>
+
+<p class="lead">言語を選んで「通訳を呼ぶ」だけで、対応可能な通訳者にビデオ通話でつながります。</p>
+
+<h2>通話の呼び出し</h2>
+<div class="card"><ol>
+<li>ご希望の<b>言語</b>を選びます。</li>
+<li>（パターンB・任意）「現在地を送信する」に同意すると市区町村を記録します。</li>
+<li><span class="btn">通訳を呼ぶ</span> を押します。「順番をお待ちください（○番目）」と表示されます。</li>
+<li>担当が空くと<b>自動的に通話が始まります</b>。</li>
+</ol></div>
+
+<h2>通話中の操作</h2>
+<ul>
+<li><span class="btn">マイク オフ</span> / <span class="btn">カメラ オフ</span>：音声・映像の一時停止。</li>
+<li><span class="btn">退室</span>：通話を終了して受付画面に戻ります。</li>
+</ul>
+
+<h2>カメラの切り替え（スマホ・タブレット）</h2>
+<p>前面（インカメラ）と背面（アウトカメラ）を切り替えられます。</p>
+<ul>
+<li>通話画面の <span class="btn">カメラ切替</span> を押すたびに、イン⇔アウトが切り替わります。</li>
+<li>このボタンは<b>カメラが2つ以上ある端末（スマホ/タブレット）でのみ表示</b>されます。PCなど1つの端末では表示されません。</li>
+</ul>
+
+<h2>背景のぼかし・差し替え</h2>
+<p>自分の映像の背景をぼかしたり、画像に差し替えられます。</p>
+<ul>
+<li>通話画面の「背景」から <span class="btn">なし</span> / <span class="btn">ぼかし</span> / <span class="btn">背景1</span> / <span class="btn">背景2</span> を選びます。</li>
+<li>初回は準備に数秒かかります。対応していない端末ではボタンは出ません。</li>
+</ul>
+<div class="warn">背景処理は端末に負荷がかかります。動作が重い・発熱する場合は「なし」に戻してください。</div>
+
+<h2>お支払いが必要な端末の場合（課金）</h2>
+<p>課金対象の受付端末では、通話が有料（従量課金）になります。初回にカードを登録すると、以降は自動で決済されます。</p>
+<h3>カード登録（初回のみ）</h3>
+<div class="card"><ol>
+<li>受付画面の <span class="btn">カード登録</span> を押します。</li>
+<li>安全な入力画面（Stripe）でカード番号を入力します（番号はStripe側で保管されます）。</li>
+<li>登録後は「お支払いカード: visa ****4242（登録済み）」と表示されます。</li>
+</ol></div>
+<h3>料金と延長</h3>
+<ul>
+<li>接続時に<b>基本料（初期100円・最初の5分）</b>が決済され通話開始。</li>
+<li>通話画面に残り時間・現在の料金・<span class="btn">延長する（+¥100）</span>が表示されます。</li>
+<li>延長したい時はボタンを押すと5分延長（追加料金）。押さずに時間を過ぎると自動終了します。</li>
+</ul>
+<div class="note">決済に失敗すると通話は接続されません（または延長されません）。カードは受付画面の「カード変更」から再登録できます。</div>
+
+<h2>困ったとき</h2>
+<table><tr><th>症状</th><th>対処</th></tr>
+<tr><td>カメラが使えない/映像が出ない</td><td>ブラウザのカメラ許可を確認（許可ダイアログで「許可」）。</td></tr>
+<tr><td>つながらない</td><td>対応言語の通訳者が空くまでお待ちください。時間がかかる場合は担当へ。</td></tr>
+<tr><td>背景/切替が出ない</td><td>非対応の端末・ブラウザの可能性。最新のChrome/Edgeを推奨。</td></tr>
+</table>
+
+</div>
+<script>
+(function(){
+  var t=localStorage.getItem('authToken');
+  if(!t){ location.href='/'; return; }
+  fetch('/api/auth/me',{headers:{'x-auth-token':t}}).then(function(r){return r.ok?r.json():Promise.reject();})
+   .then(function(u){ var w=document.getElementById('who'); if(w) w.textContent=u.displayName||''; })
+   .catch(function(){ localStorage.removeItem('authToken'); location.href='/'; });
+})();
+</script>
+</body></html>
