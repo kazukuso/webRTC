@@ -57,7 +57,6 @@
     <div class="controls">
       <button class="ghost" id="micBtn">マイク オフ</button>
       <button class="ghost" id="camBtn">カメラ オフ</button>
-      <button class="ghost hidden" id="recBtn">● 録画開始</button>
       <span id="bgCtrl" class="hidden" style="display:inline-flex;gap:6px;align-items:center;">
         <span style="font-size:12px;color:#555;">背景:</span>
         <button class="ghost" id="bgOff">なし</button>
@@ -132,7 +131,7 @@ async function poll(){
     // 相手が退出/セッション終了 → コンソール(待機)へ自動復帰
     CallUI.disconnect(); inCall=false; recording=false;
     $("bgCtrl").classList.add("hidden");
-    $("recBtn").textContent="● 録画開始"; $("recBtn").style.color=""; $("recBtn").classList.add("hidden"); $("recMsg").textContent="";
+    $("recMsg").textContent="";
     $("callCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
     setState("available");
   }
@@ -143,7 +142,6 @@ async function poll(){
     inCall=true; setState("busy");
     $("consoleCard").classList.add("hidden"); $("callCard").classList.remove("hidden");
     $("callInfo").textContent=`対応中: ${d.customer||'-'}（${d.language||''} / パターン${d.mode||''}）`;
-    if(role==='interpreter') $("recBtn").classList.remove('hidden');
     await CallUI.connect(d.url,d.token,{localVideo:$("localVideo"), remoteContainer:$("remotes")});
     if(CallUI.bgSupported && CallUI.bgSupported()) $("bgCtrl").classList.remove("hidden");
   } else setState(d.status);
@@ -152,23 +150,14 @@ async function hangup(){
   await fetch("/api/staff/hangup",{method:"POST",headers:AH,body:'{}'});
   CallUI.disconnect(); inCall=false; recording=false;
   $("bgCtrl").classList.add("hidden");
-  $("recBtn").textContent="● 録画開始"; $("recBtn").style.color=""; $("recMsg").textContent="";
+  $("recMsg").textContent="";
   $("callCard").classList.add("hidden"); $("consoleCard").classList.remove("hidden");
   setState("available"); poll();
-}
-async function toggleRecord(){
-  const p = recording ? "/api/staff/record/stop" : "/api/staff/record/start";
-  $("recMsg").textContent = recording?"録画停止中...":"録画開始中...";
-  const r=await fetch(p,{method:"POST",headers:AH,body:'{}'}); const d=await r.json();
-  if(!r.ok){ $("recMsg").textContent="エラー: "+(d.error||""); return; }
-  recording=!recording; $("recBtn").textContent=recording?"■ 録画停止":"● 録画開始"; $("recBtn").style.color=recording?"#b3261e":"";
-  $("recMsg").textContent=recording?("録画中: "+d.filepath):("保存しました: "+(d.filepath||""));
 }
 
 $("availBtn").onclick=()=>setStatus("available");
 $("offBtn").onclick=()=>setStatus("offline");
 $("hangupBtn").onclick=hangup;
-$("recBtn").onclick=toggleRecord;
 $("micBtn").onclick=()=>CallUI.toggleMic($("micBtn"));
 $("camBtn").onclick=()=>CallUI.toggleCam($("camBtn"),$("localVideo"));
 function toast(msg){ const el=$("recMsg"); if(el){ el.textContent=msg; clearTimeout(window.__t); window.__t=setTimeout(()=>{ if($("recMsg")) $("recMsg").textContent=""; },4000);} }
