@@ -25,6 +25,3 @@ livekit-poc/recordings/
 # ---- バックアップ（コミットしない） ----
 *.bak
 *.bak-*
-
-# 背景処理モデル（ビルド時に取得）
-livekit-poc/web/lkbg/*.tflite
