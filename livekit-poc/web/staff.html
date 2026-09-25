@@ -25,6 +25,11 @@
   figure video { width:100%; height:100%; object-fit:cover; }
   figure figcaption { position:absolute; left:8px; bottom:8px; color:#fff; font-size:12px; background:rgba(0,0,0,.5); padding:2px 8px; border-radius:6px; }
   .hidden { display:none; } #msg2,#recMsg { font-size:13px; color:#666; margin-top:8px; }
+  #waitList table{border-collapse:collapse;width:100%;margin-top:4px;}
+  #waitList th,#waitList td{border:1px solid #e3e7ee;padding:6px 8px;text-align:left;font-size:13px;}
+  #waitList th{background:#f2f5f9;}
+  #waitList .ok{padding:5px 14px;}
+  #waitList .empty{color:#666;font-size:13px;padding:6px 2px;}
 </style>
 </head>
 <body>
@@ -38,6 +43,8 @@
       <button class="ok" id="availBtn">応対可にする</button>
       <button class="ghost" id="offBtn">離席</button>
     </div>
+    <div id="waitList" style="margin-top:14px;"></div>
+    <div id="listMsg" style="color:#b3261e;font-size:13px;margin-top:6px;min-height:16px;"></div>
     <div id="msg2">「応対可」にすると自動で着信します。</div>
   </div>
 
@@ -68,6 +75,34 @@
 const $ = (id)=>document.getElementById(id);
 const token=localStorage.getItem('authToken');
 const AH={'Content-Type':'application/json','x-auth-token':token};
+const esc=(v)=>String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+function setListMsg(m){ const el=$("listMsg"); if(el){ el.textContent=m||''; if(m){ clearTimeout(window.__lm); window.__lm=setTimeout(()=>{ if($("listMsg")) $("listMsg").textContent=''; },4000);} } }
+function renderList(d){
+  const box=$("waitList"); if(!box) return;
+  if(d.status!=='available'){ box.innerHTML='<div class="empty">「応対可にする」を押すと、待機中の通話一覧が表示されます。</div>'; return; }
+  const rows = (role==='guide') ? (d.guideList||[]) : (d.waitingList||[]);
+  if(!rows.length){ box.innerHTML='<div class="empty">現在、待機中の通話はありません。</div>'; return; }
+  let h='<table>';
+  h += (role==='guide')
+    ? '<tr><th>顧客</th><th>言語</th><th>通訳者</th><th>地域</th><th></th></tr>'
+    : '<tr><th>顧客</th><th>言語</th><th>種別</th><th>地域</th><th>待ち</th><th></th></tr>';
+  for(const r of rows){
+    const b='<button class="ok" onclick="accept(\''+r.sessionId+'\')">'+(role==='guide'?'参加':'応答')+'</button>';
+    h += (role==='guide')
+      ? `<tr><td>${esc(r.name)}</td><td>${esc(r.language)}</td><td>${esc(r.interpreter)||'-'}</td><td>${esc(r.location)||'-'}</td><td>${b}</td></tr>`
+      : `<tr><td>${esc(r.name)}</td><td>${esc(r.language)}</td><td>${r.mode||''}</td><td>${esc(r.location)||'-'}</td><td>${r.waitSec}s</td><td>${b}</td></tr>`;
+  }
+  h+='</table>';
+  box.innerHTML=h;
+}
+async function accept(sid){
+  try{
+    const r=await fetch('/api/staff/accept',{method:'POST',headers:AH,body:JSON.stringify({sessionId:sid})});
+    const d=await r.json();
+    if(!r.ok){ setListMsg(d.error||'応答できませんでした'); poll(); return; }
+    poll(); // 対応中(busy)になり通話へ自動遷移
+  }catch(_){ setListMsg('通信エラー'); }
+}
 let me=null, role=null, polling=null, inCall=false, recording=false;
 
 (async ()=>{
@@ -103,6 +138,7 @@ async function poll(){
   }
   if(role==='guide') $("waitInfo").textContent="案内人待ちのB通話: "+(d.guideNeeded??0)+" 件";
   else if(d.waitingByLang) $("waitInfo").textContent="待機中: "+Object.entries(d.waitingByLang).map(([k,v])=>`${k}:${v}`).join(' / ');
+  renderList(d);
   if(d.assigned){
     inCall=true; setState("busy");
     $("consoleCard").classList.add("hidden"); $("callCard").classList.remove("hidden");

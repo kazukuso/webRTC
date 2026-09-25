@@ -28,6 +28,8 @@ const { STRIPE_SECRET_KEY = '', STRIPE_PUBLISHABLE_KEY = '', STRIPE_WEBHOOK_SECR
 let stripe = null;
 if (STRIPE_SECRET_KEY) { try { stripe = require('stripe')(STRIPE_SECRET_KEY); console.log('[stripe] 有効（実決済モード）'); } catch (e) { console.error('[stripe] SDK読み込み失敗（npm i stripe）:', e.message); } }
 const stripeEnabled = () => !!stripe;
+// 割当方式: 既定は手動（スタッフが一覧から応答）。AUTO_ASSIGN=1 で従来の自動割当に戻す。
+const AUTO_ASSIGN = process.env.AUTO_ASSIGN === '1';
 
 // ---------- DB ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -243,6 +245,7 @@ const nameOf = (m, id) => (id ? m.get(id)?.name || '' : '');
 function assignInterpreter(s, intp) { s.room = s.room || `room-${s.id}`; s.interpreterId = intp.id; intp.status = 'busy'; intp.room = s.room; intp.sessionId = s.id; }
 function assignGuide(s, gd) { s.room = s.room || `room-${s.id}`; s.guideId = gd.id; s.needGuide = false; gd.status = 'busy'; gd.room = s.room; gd.sessionId = s.id; }
 function tryAssign() {
+  if (!AUTO_ASSIGN) return; // 手動割当モードでは自動割当しない
   let changed = true;
   while (changed) {
     changed = false;
@@ -435,10 +438,42 @@ app.get('/api/staff/poll', requireAuth('interpreter', 'guide'), async (req, res)
     const token = await issueToken(st.room, role + '-' + st.id, st.name, role);
     return res.json({ assigned: true, room: st.room, url: LIVEKIT_URL, token, role, customer: s?.name || '', language: s ? langLabel(s.language) : '', mode: s?.mode || '' });
   }
-  if (isGuide) return res.json({ assigned: false, status: st.status, role: 'guide', displayName: st.name, guideNeeded: [...sessions.values()].filter((x) => x.status === 'assigned' && x.mode === 'B' && !x.guideId).length });
+  if (isGuide) {
+    const glist = [...sessions.values()].filter((x) => x.status === 'assigned' && x.mode === 'B' && !x.guideId)
+      .map((x) => ({ sessionId: x.id, name: x.name, language: langLabel(x.language), mode: x.mode, location: x.location || '', interpreter: nameOf(interpreters, x.interpreterId), waitSec: x.assignedAt ? Math.round((Date.now() - x.assignedAt) / 1000) : 0 }));
+    return res.json({ assigned: false, status: st.status, role: 'guide', displayName: st.name, guideNeeded: glist.length, guideList: glist });
+  }
   const byLang = {}; for (const c of st.languages) byLang[c] = waitingSids().filter((x) => sessions.get(x).language === c).length;
-  res.json({ assigned: false, status: st.status, role: 'interpreter', displayName: st.name, languages: st.languages, waitingByLang: byLang });
+  const wlist = waitingSids().map((sid) => sessions.get(sid)).filter((x) => x && st.languages.includes(x.language))
+    .map((x) => ({ sessionId: x.id, name: x.name, language: langLabel(x.language), mode: x.mode, location: x.location || '', waitSec: Math.round((Date.now() - x.enqueuedAt) / 1000) }));
+  res.json({ assigned: false, status: st.status, role: 'interpreter', displayName: st.name, languages: st.languages, waitingByLang: byLang, waitingList: wlist });
 });
+// スタッフが待機中の通話を選んで応答（手動割当）
+app.post('/api/staff/accept', requireAuth('interpreter', 'guide'), (req, res) => {
+  const { st, isGuide } = presenceOf(req.user);
+  const s = sessions.get(req.body?.sessionId);
+  if (!s) return res.status(404).json({ error: 'この通話は見つかりません（終了した可能性）' });
+  if (st.status === 'busy') return res.status(409).json({ error: 'すでに対応中です' });
+  if (isGuide) {
+    if (!(s.status === 'assigned' && s.mode === 'B' && !s.guideId)) return res.status(409).json({ error: '受け付けできません（対応済み/対象外）' });
+    assignGuide(s, st);
+    db.prepare('UPDATE calls SET guide_name=? WHERE id=?').run(nameOf(guides, s.guideId), s.callId);
+    logEvent('guide_accept', st.name, { session: s.id });
+    return res.json({ ok: true });
+  }
+  if (s.status !== 'waiting') return res.status(409).json({ error: 'この利用者は既に対応中です' });
+  if (!st.languages.includes(s.language)) return res.status(400).json({ error: '対応言語が一致しません' });
+  assignInterpreter(s, st);
+  const i = queue.indexOf(s.id); if (i !== -1) queue.splice(i, 1);
+  s.status = 'assigned'; s.assignedAt = Date.now();
+  if (s.mode === 'B') s.needGuide = true;
+  db.prepare('UPDATE calls SET assigned_at=?, wait_sec=?, interpreter_name=?, guide_name=?, status=? WHERE id=?')
+    .run(s.assignedAt, Math.round((s.assignedAt - s.enqueuedAt) / 1000), nameOf(interpreters, s.interpreterId), nameOf(guides, s.guideId), 'active', s.callId);
+  logEvent('accept', st.name, { session: s.id, language: s.language, mode: s.mode });
+  chargeBase(s);
+  res.json({ ok: true });
+});
+
 app.post('/api/staff/status', requireAuth('interpreter', 'guide'), (req, res) => {
   const { st } = presenceOf(req.user);
   if (st.status !== 'busy') st.status = req.body?.status === 'available' ? 'available' : 'offline';
